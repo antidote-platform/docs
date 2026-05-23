@@ -22,6 +22,19 @@
             ]
           },
           {
+            "group": "Data Integrity",
+            "pages": [
+              "data-integrity/user-guide"
+            ]
+          },
+          {
+            "group": "Runtime Security",
+            "pages": [
+              "runtime-security/guide",
+              "runtime-security/proxy"
+            ]
+          },
+          {
             "group": "Customization",
             "pages": [
               "essentials/settings",
@@ -51,19 +64,18 @@
         "tab": "API reference",
         "groups": [
           {
-            "group": "API documentation",
+            "group": "Overview",
             "pages": [
               "api-reference/introduction"
             ]
           },
           {
-            "group": "Endpoint examples",
-            "pages": [
-              "api-reference/endpoint/get",
-              "api-reference/endpoint/create",
-              "api-reference/endpoint/delete",
-              "api-reference/endpoint/webhook"
-            ]
+            "group": "Antidote API",
+            "openapi": "api-reference/openapi.json"
+          },
+          {
+            "group": "Runtime Security API",
+            "openapi": "api-reference/openapi-runtime-security.yaml"
           }
         ]
       }
@@ -84,8 +96,8 @@
     }
   },
   "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
+    "light": "/logo/light.png",
+    "dark": "/logo/dark.png"
   },
   "navbar": {
     "links": [

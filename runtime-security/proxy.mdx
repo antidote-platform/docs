@@ -1,0 +1,910 @@
+---
+title: 'Reverse-Proxy'
+description: 'Wire-compatible passthrough endpoints for OpenAI, Anthropic, Gemini, Vertex, Bedrock, and Ollama — drop Antidote in front of LLM traffic by swapping one config value.'
+---
+
+# Runtime Security Reverse-Proxy
+
+Wire-compatible passthrough endpoints for all supported LLM providers
+that let client applications drop Antidote Runtime Security in front of
+their LLM traffic by swapping a single configuration value — the SDK
+`base_url`. Every prompt is scanned before it reaches the upstream
+provider and every response is scanned before it returns to the caller,
+reusing the same scanner, thresholds, settings, and event store as the
+existing `/scan/input` and `/scan/output` endpoints.
+
+**Supported providers:**
+
+- **Native routes** — OpenAI, Anthropic (Claude), Google Gemini, Google
+  Vertex AI, AWS Bedrock.
+- **OpenAI-compatible** — Groq, DeepSeek, Perplexity, Mistral AI,
+  OpenRouter, Cerebras.
+- **Self-hosted via OpenAI-compatible** — Ollama, llama.cpp, vLLM,
+  on-prem TGI, or anything else exposing an OpenAI-shaped API.
+
+This document covers the request flow, authentication model, supported
+payload shapes, redaction semantics, error surface, configuration,
+observability, and current MVP limits.
+
+---
+
+## 1. Why a Reverse-Proxy?
+
+The pre-existing `POST /api/runtime-security/scan/{input,output}`
+endpoints require clients to wire scanning explicitly at two points in
+their code. That's fine for purpose-built middleware, but awkward for:
+
+- Applications that already go through an OpenAI or Anthropic SDK and
+  want zero code changes beyond `base_url`.
+- Third-party tools (LangChain, LlamaIndex, raw `curl`, Cursor, etc.)
+  where the wire protocol is the only contract Antidote can rely on.
+- Teams that want a hard guarantee that every call went through the
+  firewall, enforced at the network boundary instead of relying on each
+  developer to remember to call the scan endpoints.
+
+The proxy routes solve this by accepting the provider's own request
+shape, running the Runtime Security scanner on both directions, and
+forwarding unchanged-or-redacted payloads upstream.
+
+---
+
+## 2. Endpoints
+
+All routes live under the existing `runtime-security` feature prefix
+and are mounted in `backend/app/api/router.py` alongside the scan API.
+
+| Method | Path                                                                                                            | Upstream                                                                                                  |
+| ------ | --------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| POST   | `/api/runtime-security/proxy/openai/v1/chat/completions`                                                        | `https://api.openai.com/v1/chat/completions`                                                              |
+| POST   | `/api/runtime-security/proxy/openai/v1/completions`                                                             | `https://api.openai.com/v1/completions`                                                                   |
+| POST   | `/api/runtime-security/proxy/anthropic/v1/messages`                                                             | `https://api.anthropic.com/v1/messages`                                                                   |
+| POST   | `/api/runtime-security/proxy/openai-compatible/v1/chat/completions`                                             | Picked by `X-Antidote-Upstream-Provider` or App routing config (see §6.4)                                 |
+| POST   | `/api/runtime-security/proxy/openai-compatible/v1/completions`                                                  | Same as above                                                                                             |
+| POST   | `/api/runtime-security/proxy/gemini/v1beta/models/{model}:generateContent`                                      | `https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent`                         |
+| POST   | `/api/runtime-security/proxy/gemini/v1beta/models/{model}:streamGenerateContent`                                | `…:streamGenerateContent?alt=sse`                                                                         |
+| POST   | `/api/runtime-security/proxy/vertex/v1/projects/{project}/locations/{loc}/publishers/google/models/{m}:generateContent` | `https://{loc}-aiplatform.googleapis.com/v1/projects/{project}/locations/{loc}/publishers/google/models/{m}:generateContent` |
+| POST   | `/api/runtime-security/proxy/vertex/v1/.../models/{m}:streamGenerateContent`                                    | Same host, `:streamGenerateContent?alt=sse`                                                               |
+| POST   | `/api/runtime-security/proxy/bedrock/model/{modelId}/converse`                                                  | `https://bedrock-runtime.{region}.amazonaws.com/model/{modelId}/converse` (SigV4 signed server-side)      |
+
+Implementations live in:
+
+- `backend/app/api/runtime_security_proxy.py` — FastAPI routes, auth,
+  header filtering, error shaping.
+- `backend/app/runtime_security/proxy.py` — pure payload-walk helpers
+  (`scan_openai_chat_request`, `scan_anthropic_response`, …) and
+  `forward_upstream()`.
+- `backend/tests/test_runtime_security_proxy.py` — unit tests for the
+  payload-walk helpers against a `FakeScanner`.
+
+---
+
+## 3. Base URL Swap in Client SDKs
+
+The user-facing change is a single setting.
+
+### OpenAI Python SDK
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="https://<your-antidote-host>/api/runtime-security/proxy/openai/v1",
+    api_key="sk-...your-openai-key...",           # forwarded upstream
+    default_headers={
+        "X-API-Key": "ak_...your-antidote-api-key...",   # antidote auth
+        "X-Antidote-App-Id": "app_...",                  # which App owns this traffic
+    },
+)
+
+client.chat.completions.create(
+    model="gpt-4o",
+    messages=[{"role": "user", "content": "Hello"}],
+)
+```
+
+### OpenAI TypeScript SDK
+
+```ts
+import OpenAI from "openai";
+
+const client = new OpenAI({
+  baseURL: "https://<your-antidote-host>/api/runtime-security/proxy/openai/v1",
+  apiKey: process.env.OPENAI_API_KEY,
+  defaultHeaders: {
+    "X-API-Key": process.env.ANTIDOTE_API_KEY!,
+    "X-Antidote-App-Id": process.env.ANTIDOTE_APP_ID!,
+  },
+});
+```
+
+### Anthropic Python SDK
+
+```python
+from anthropic import Anthropic
+
+client = Anthropic(
+    base_url="https://<your-antidote-host>/api/runtime-security/proxy/anthropic",
+    api_key="sk-ant-...your-anthropic-key...",    # forwarded upstream as x-api-key
+    default_headers={
+        "X-Antidote-Key": "ak_...your-antidote-api-key...",  # antidote auth
+        "X-Antidote-App-Id": "app_...",                      # which App owns this traffic
+    },
+)
+
+client.messages.create(
+    model="claude-opus-4-6",
+    max_tokens=1024,
+    messages=[{"role": "user", "content": "Hello"}],
+)
+```
+
+> **Why two different antidote-auth headers?** OpenAI puts its upstream
+> key in `Authorization`, Anthropic puts its upstream key in
+> `x-api-key`. To avoid colliding with either, OpenAI callers send the
+> antidote credential as `X-API-Key` (free for OpenAI) and Anthropic
+> callers send it as `X-Antidote-Key` (free for Anthropic).
+> `Authorization` is **never** consumed by the proxy routes — it is
+> forwarded verbatim.
+
+### OpenAI-compatible providers (Groq, DeepSeek, Perplexity, Mistral, OpenRouter, Cerebras)
+
+The same OpenAI SDK works against the `/openai-compatible/v1` route —
+pick the upstream with `X-Antidote-Upstream-Provider`.
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="https://<your-antidote-host>/api/runtime-security/proxy/openai-compatible/v1",
+    api_key="gsk_...your-groq-key...",
+    default_headers={
+        "X-API-Key": "ak_...your-antidote-api-key...",
+        "X-Antidote-App-Id": "app_...",
+        "X-Antidote-Upstream-Provider": "groq",   # groq|deepseek|perplexity|mistral|openrouter|cerebras
+    },
+)
+```
+
+Allowlisted provider slugs (in `KNOWN_OPENAI_COMPAT_PROVIDERS`):
+`groq`, `deepseek`, `perplexity`, `mistral`, `openrouter`, `cerebras`.
+Deployments can subset this list with
+`RUNTIME_SECURITY_OPENAI_COMPAT_ALLOWLIST=groq,mistral`.
+
+Apps with `routing.provider` (or `routing.upstream_base_url`) set bind
+the upstream by default, so the header becomes optional for traffic
+attributed to that App.
+
+### Self-hosted Ollama, llama.cpp, vLLM, TGI
+
+Self-hosted runtimes that speak OpenAI-shape go through the same route
+using `X-Antidote-Upstream-Base`. The deployment must allowlist the
+base URL via `RUNTIME_SECURITY_OPENAI_COMPAT_EXTRA_BASES`:
+
+```bash
+# server env
+RUNTIME_SECURITY_OPENAI_COMPAT_EXTRA_BASES=http://ollama.internal:11434/v1,http://llamacpp.internal:8080
+```
+
+```python
+client = OpenAI(
+    base_url="https://<your-antidote-host>/api/runtime-security/proxy/openai-compatible/v1",
+    api_key="not-needed-for-ollama",
+    default_headers={
+        "X-API-Key": "ak_...",
+        "X-Antidote-App-Id": "app_...",
+        "X-Antidote-Upstream-Base": "http://ollama.internal:11434/v1",
+    },
+)
+```
+
+> Ollama's OpenAI-compatible endpoint is `http://<host>:11434/v1`;
+> llama.cpp's server exposes `http://<host>:8080/v1` by default.
+
+### Google Gemini (Google AI Studio)
+
+```python
+import google.generativeai as genai
+
+genai.configure(
+    api_key="...your-google-api-key...",   # forwarded upstream via x-goog-api-key / ?key=
+    transport="rest",
+    client_options={
+        "api_endpoint": "https://<your-antidote-host>/api/runtime-security/proxy/gemini",
+    },
+)
+# OR pass the key as a header — the proxy forwards both query-string `?key=` and `x-goog-api-key`.
+```
+
+Or with plain `requests`:
+
+```python
+import requests
+
+requests.post(
+    "https://<your-antidote-host>/api/runtime-security/proxy/gemini/v1beta/models/gemini-1.5-pro:generateContent",
+    headers={
+        "X-API-Key": "ak_...your-antidote-api-key...",
+        "X-Antidote-App-Id": "app_...",
+        "x-goog-api-key": "...your-google-api-key...",
+    },
+    json={"contents": [{"role": "user", "parts": [{"text": "Hello"}]}]},
+)
+```
+
+### Google Vertex AI
+
+Caller provides an OAuth `Authorization: Bearer <gcloud-access-token>`
+header just like the native Vertex endpoint. Path encodes the project,
+location, publisher, and model:
+
+```python
+from google.cloud import aiplatform_v1
+# Or via raw HTTP:
+import requests
+
+token = ...  # from `gcloud auth print-access-token` or a service-account flow
+
+requests.post(
+    "https://<your-antidote-host>/api/runtime-security/proxy/vertex/v1/projects/"
+    "my-proj/locations/us-central1/publishers/google/models/gemini-1.5-pro:generateContent",
+    headers={
+        "X-API-Key": "ak_...",
+        "X-Antidote-App-Id": "app_...",
+        "Authorization": f"Bearer {token}",
+    },
+    json={"contents": [{"role": "user", "parts": [{"text": "Hello"}]}]},
+)
+```
+
+The proxy parses the `{location}` segment from the path and routes to
+`https://{location}-aiplatform.googleapis.com`.
+
+### AWS Bedrock (Converse API)
+
+Bedrock requires AWS SigV4 signing of the *body*, which means the proxy
+must sign on behalf of the caller (signing before scanning would break
+the signature whenever a `redact` rewrites the body). AWS credentials
+are passed via dedicated headers and the proxy SigV4-signs each
+upstream call server-side:
+
+```python
+import requests, os
+
+requests.post(
+    "https://<your-antidote-host>/api/runtime-security/proxy/bedrock/"
+    "model/anthropic.claude-3-5-sonnet-20241022-v2:0/converse",
+    headers={
+        "X-API-Key": "ak_...your-antidote-api-key...",
+        "X-Antidote-App-Id": "app_...",
+        "X-Antidote-AWS-Access-Key-Id": os.environ["AWS_ACCESS_KEY_ID"],
+        "X-Antidote-AWS-Secret-Access-Key": os.environ["AWS_SECRET_ACCESS_KEY"],
+        "X-Antidote-AWS-Session-Token": os.environ.get("AWS_SESSION_TOKEN", ""),
+        "X-Antidote-AWS-Region": "us-east-1",
+    },
+    json={
+        "messages": [{"role": "user", "content": [{"text": "Hello"}]}],
+        "system": [{"text": "You are a helpful assistant."}],
+        "inferenceConfig": {"maxTokens": 1024},
+    },
+)
+```
+
+If the deployment already has IAM credentials in its environment
+(`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`), the
+`X-Antidote-AWS-*` headers become optional and the server-side identity
+is used instead. The headers always take precedence so callers can use
+their own AWS account.
+
+> **Streaming.** `/bedrock/model/{m}/converse-stream` is **not** yet
+> implemented — Bedrock streams use the AWS event-stream binary framing
+> which requires a custom parser. Use the non-streaming `/converse`
+> route for now.
+
+---
+
+## 4. Authentication Model
+
+Defined by `proxy_get_current_user()` in `runtime_security_proxy.py`.
+Unlike the normal `get_current_user` dependency, it must leave
+`Authorization` untouched so the upstream auth header passes through.
+
+Priority order:
+
+1. `X-API-Key: ak_...` — the normal antidote API key header. OpenAI
+   clients should use this.
+2. `X-Antidote-Key: ak_... | Bearer <jwt>` — fallback for clients
+   that already use `x-api-key` for the upstream provider (i.e.
+   Anthropic).
+3. `antidote_session` cookie — lets the in-app dashboard exercise the
+   proxy without provisioning an API key.
+
+After authentication, the route enforces the `runtime_security.scan`
+permission the same way `/scan/input` and `/scan/output` do. API keys
+used with the proxy need a scope that maps to `runtime_security.scan`
+(typically `*`) and a role with `runtime_security.scan` capability.
+
+Missing credentials return HTTP 401 with a message instructing the
+client to set `X-API-Key` or `X-Antidote-Key`. Missing permission
+returns HTTP 403.
+
+### App attribution
+
+Every proxy call must also carry `X-Antidote-App-Id` (the UUID of an
+App in the workspace). The proxy resolves the App via
+`runtime_security.app_resolver.resolve_runtime_app`, which:
+
+1. Returns **HTTP 400 `APP_ID_REQUIRED` / `APP_NOT_FOUND`** for a
+   missing or unknown App.
+2. Returns **HTTP 423 `APP_DISABLED`** when `app.status == "disabled"`,
+   **HTTP 410 `APP_ARCHIVED`** when archived or soft-deleted.
+3. Verifies `X-Antidote-App-Token` against the App's signed token
+   table when `require_signed_token=true`
+   (`APP_TOKEN_REQUIRED` / `APP_TOKEN_INVALID`).
+4. Enforces `max_events_per_hour` / `max_events_per_day` and returns
+   **HTTP 429 `APP_QUOTA_EXCEEDED`** with `Retry-After` when hit.
+5. Loads the App's `current_config_version` and stores the
+   `ResolvedAppContext` on `request.state.runtime_security_app`. The
+   scanner picks up thresholds, detectors, custom phrases, custom PII
+   rules, tool policy, and `routing.forbidden_providers` from this
+   context — so two Apps in the same workspace can run with very
+   different security postures against the same shared firewall.
+
+The resolved App's `config_version_id` is stamped onto every
+persisted event so the dashboard can correlate sudden verdict-mix
+changes with config edits.
+
+> **Strict attribution mode.** Setting
+> `ANTIDOTE_REQUIRE_APP_ATTRIBUTION=1` makes the *scan* endpoints
+> reject calls without an App-Id too. The proxy already requires it
+> regardless of this flag.
+
+---
+
+## 5. Request & Response Flow
+
+For every proxy call the route performs:
+
+1. **Authenticate** (see §4) and load the current
+   `RuntimeSecurityConfig` via `_load_settings(db)`. If
+   `cfg.enabled == False`, return **HTTP 503** — the proxy refuses to
+   pass traffic through when the firewall is disabled, so operators get
+   a loud signal instead of silent bypass.
+2. **Parse the JSON body** and reject `stream=true` with **HTTP 400**.
+   See §9 for rationale.
+3. **Input scan.** Walk the payload's user-supplied text fields and
+   call `RuntimeSecurityScanner.scan(text, direction="input")` on each
+   one. On the first `block` verdict the route short-circuits with a
+   provider-shaped error (§7) and persists a `block` event. On a
+   `redact` verdict the helper rewrites the matching field in place so
+   the forwarded request carries the sanitised copy.
+4. **Log the input verdict** (`cfg.log_events`) via the same
+   `_persist_event()` used by `/scan/input`, stamped with
+   `source_app="proxy:openai"` / `source_app="proxy:anthropic"` so the
+   dashboard can segment proxy traffic from direct scan traffic.
+5. **Forward upstream** via `httpx.AsyncClient.post()`. Headers are
+   filtered by `_filter_inbound_headers()` — hop-by-hop and antidote
+   auth headers are stripped, and provider-specific headers are kept
+   (`Authorization` for OpenAI, `x-api-key` / `anthropic-version` for
+   Anthropic).
+6. **Pass through upstream errors untouched.** If the upstream returns
+   a non-2xx, the route surfaces the upstream body and status code
+   verbatim so SDKs can parse the provider's native error shape. We do
+   not rewrite these.
+7. **Output scan.** Walk the response body (`choices[].message` for
+   OpenAI, `content[]` for Anthropic) and scan each text block with
+   `direction="output"`. Same `block` / `redact` semantics as the
+   request phase.
+8. **Log the output verdict** and return the (possibly redacted) body
+   to the caller with the upstream status code.
+
+Input scans run with `direction="input"`, which activates the
+prompt-injection classifier. Output scans run with
+`direction="output"`, which skips prompt-injection detection (the
+model's own reply is not a prompt) and only runs PII/secret leakage
+checks.
+
+---
+
+## 6. Supported Payload Shapes
+
+### OpenAI Chat Completions (`/v1/chat/completions`)
+
+`scan_openai_chat_request` walks `body["messages"]`. For each message:
+
+- **Role filter.** Only `user`, `system`, and `developer` messages are
+  scanned on input. Assistant turns are the model's own previous
+  output; they get scanned when they come back through `direction="output"`,
+  never here. This avoids false-positive input blocks when a suspicious
+  string appears in a historical assistant turn.
+- **Content shapes.** Both the legacy string form
+  (`content: "..."`) and the current array-of-parts form
+  (`content: [{type: "text", text: "..."}]`) are supported. Non-text
+  parts (`image_url`, `audio`, `tool_use`, …) pass through untouched.
+- **Redaction.** The first matching text part is rewritten in place;
+  other parts (images, tool calls) are preserved. For string content
+  the entire field is replaced with the scanner's redacted text.
+
+`scan_openai_chat_response` walks `body["choices"][].message` with the
+same content-shape support.
+
+### OpenAI Legacy Completions (`/v1/completions`)
+
+`scan_openai_completion_request` accepts either string or list prompts.
+List prompts are joined with `\n` for scanning; on redact the body is
+rewritten to a single-prompt form with the scanner's redacted text.
+
+`scan_openai_completion_response` walks `body["choices"][].text`.
+
+### Anthropic Messages (`/v1/messages`)
+
+`scan_anthropic_request` covers:
+
+- `body["system"]` — string form and list-of-text-blocks form.
+- `body["messages"][]` where `role == "user"`, with both string and
+  array content.
+- Assistant turns are skipped for the same reason as OpenAI.
+
+`scan_anthropic_response` walks `body["content"][]` and scans each
+`type == "text"` block. Non-text blocks (`tool_use`, `thinking`,
+`image`) pass through untouched.
+
+### Google Gemini / Vertex AI (`:generateContent` and `:streamGenerateContent`)
+
+Gemini and Vertex share the same body shape (`generateContent` payload),
+so a single set of helpers — `scan_gemini_request` and
+`scan_gemini_response` — covers both routes.
+
+- `body["systemInstruction"]["parts"][].text` is scanned and redacted
+  in place (string and object form both supported).
+- `body["contents"][]` is filtered to user turns. The role can be
+  absent or `"user"`; `"model"` turns are skipped (they're prior model
+  output and will be scanned when they come back as response).
+- `parts[]` with `text` are scanned; non-text parts (`inlineData`,
+  `fileData`, `functionCall`) pass through untouched.
+- Streaming uses SSE with `alt=sse` query-string. The proxy parses
+  `candidates[].content.parts[].text` deltas, scans the accumulating
+  buffer with the same windowed cadence as OpenAI / Anthropic, and
+  emits a `finishReason: SAFETY` terminal event when the scanner blocks.
+
+`scan_gemini_response` walks `candidates[].content.parts[].text`.
+
+### AWS Bedrock Converse (`/model/{modelId}/converse`)
+
+`scan_bedrock_converse_request` walks:
+
+- `body["system"][].text` — list-of-text-blocks form (the only form
+  Bedrock Converse accepts).
+- `body["messages"][]` where `role == "user"`, scanning
+  `content[].text` blocks. Non-text content (`image`, `document`,
+  `toolUse`, `toolResult`) passes through untouched. Assistant turns
+  are skipped.
+
+`scan_bedrock_converse_response` walks
+`body["output"]["message"]["content"][].text` with the same
+text-block-only redaction semantics. Streaming (`/converse-stream`) is
+not yet implemented — see §3 caveat.
+
+### Verdict Folding
+
+Scanning multiple fields produces multiple `RuntimeScanResult` objects;
+the route folds them to the **worst verdict seen** (`allow < redact < block`)
+so a single request writes one input event with the strongest verdict
+and the aggregated latency. `_fold()` in
+`runtime_security/proxy.py` implements this.
+
+---
+
+## 7. Error Surface
+
+Errors are shaped to match each provider so existing SDK error handlers
+parse them without modification.
+
+### OpenAI errors
+
+```json
+{
+  "error": {
+    "message": "Blocked by Antidote Runtime Security: prompt_injection:score=0.92",
+    "type": "antidote_runtime_security",
+    "param": null,
+    "code": "antidote_blocked"
+  }
+}
+```
+
+Status codes:
+
+| Code | When                                                       | `code` field       |
+| ---- | ---------------------------------------------------------- | ------------------ |
+| 400  | Input blocked (prompt injection / PII policy hit)          | `antidote_blocked` |
+| 400  | `stream=true` or invalid JSON                              | n/a                |
+| 401  | Missing antidote credential                                | n/a                |
+| 403  | Missing `runtime_security.scan` permission                 | n/a                |
+| 502  | Upstream network error (timeout, DNS, 5xx from OpenAI)     | `upstream_error`   |
+| 502  | Output blocked (PII/secret leak in upstream response)      | `upstream_blocked` |
+| 503  | Runtime Security firewall is disabled                      | n/a                |
+
+### Anthropic errors
+
+```json
+{
+  "type": "error",
+  "error": {
+    "type": "invalid_request_error",
+    "message": "Blocked by Antidote Runtime Security: ..."
+  }
+}
+```
+
+Input blocks use `invalid_request_error`; output blocks and upstream
+failures use `api_error`.
+
+### Google Gemini / Vertex errors
+
+```json
+{
+  "error": {
+    "code": 400,
+    "status": "antidote_blocked",
+    "message": "Blocked by Antidote Runtime Security: …"
+  }
+}
+```
+
+The `code` field carries the HTTP status; `status` is the
+machine-readable reason (`antidote_blocked`, `upstream_error`,
+`upstream_blocked`, `unsupported_endpoint`).
+
+Streaming blocks emit a terminal SSE event with a
+`candidates[].finishReason: "SAFETY"` payload, mirroring Google's own
+safety-stop shape.
+
+### AWS Bedrock errors
+
+```json
+{
+  "message": "Blocked by Antidote Runtime Security: …",
+  "type": "antidote_blocked"
+}
+```
+
+Bedrock-specific status codes:
+
+| Code | When                                                                 | `type` field           |
+| ---- | -------------------------------------------------------------------- | ---------------------- |
+| 401  | Missing `X-Antidote-AWS-Access-Key-Id` / `-Secret-Access-Key`        | `missing_credentials`  |
+| 400  | Missing `X-Antidote-AWS-Region` (and no `AWS_REGION` env var)        | `missing_region`       |
+| 500  | SigV4 signing failed (malformed creds, botocore error)               | `sign_error`           |
+
+### Upstream error passthrough
+
+If the upstream provider returns a non-2xx (e.g. OpenAI 429
+rate-limit, Anthropic 400 invalid model), the proxy **does not
+rewrite** the body. The upstream JSON and status code are forwarded
+verbatim so SDKs can surface the provider's native error. Only blocks
+originated by Antidote adopt the antidote-shaped error envelope.
+
+---
+
+## 8. Configuration
+
+Defaults live in `runtime_security/proxy.py`; all are overridable via
+environment variables.
+
+| Env var                                            | Default                                   | Meaning                                                                                                                                  |
+| -------------------------------------------------- | ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `RUNTIME_SECURITY_OPENAI_BASE_URL`                 | `https://api.openai.com`                  | Upstream OpenAI (or Azure OpenAI / compatible) origin.                                                                                   |
+| `RUNTIME_SECURITY_ANTHROPIC_BASE_URL`              | `https://api.anthropic.com`               | Upstream Anthropic origin.                                                                                                               |
+| `RUNTIME_SECURITY_GEMINI_BASE_URL`                 | `https://generativelanguage.googleapis.com` | Upstream Google AI Studio origin. (Vertex picks its origin from the request path's `{location}` segment.)                              |
+| `RUNTIME_SECURITY_OPENAI_COMPAT_ALLOWLIST`         | *(empty → full catalogue)*                | Comma-separated subset of `groq,deepseek,perplexity,mistral,openrouter,cerebras` permitted on this deployment.                          |
+| `RUNTIME_SECURITY_OPENAI_COMPAT_EXTRA_BASES`       | *(empty)*                                 | Comma-separated `http(s)://` bases that callers may target via `X-Antidote-Upstream-Base` — used for Ollama, llama.cpp, vLLM, on-prem TGI. |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN` / `AWS_REGION` | *(empty)*                | Fallback AWS credentials used by the Bedrock route when the caller doesn't send `X-Antidote-AWS-*` headers.                              |
+| `RUNTIME_SECURITY_PROXY_TIMEOUT`                   | `60` (seconds)                            | Upstream request timeout for `httpx.AsyncClient`.                                                                                        |
+
+Workspace-level knobs (`injection_model`, `max_text_length`,
+`log_events`, `enabled`, pre-prompt) are exposed by
+`PUT /api/runtime-security/config` — the proxy pulls them via
+`_load_settings(db)` on every request, so a settings change takes
+effect immediately.
+
+Per-App knobs (thresholds, detectors, custom phrases, custom PII
+rules, tool policy, `routing.forbidden_providers`) are read from the
+App's current config version when the request is resolved against an
+App-Id (see §4). Editing an App's config publishes a new version that
+takes effect on the next request — no proxy restart needed.
+
+See §9 of the client guide (`runtime-security-guide.md`) for the full
+schema split.
+
+---
+
+## 9. MVP Limitations
+
+These are intentional trade-offs in the first cut, tracked for a
+follow-up:
+
+1. **Streaming coverage is partial.** OpenAI (`stream=true`), Anthropic
+   (`stream=true`), all OpenAI-compatible providers, Google Gemini
+   (`:streamGenerateContent`), and Vertex AI (`:streamGenerateContent`)
+   all stream through the proxy with windowed scanning and a
+   provider-shaped block chunk on policy hit. **AWS Bedrock streaming
+   (`/converse-stream`) is not yet implemented** — Bedrock uses the
+   AWS event-stream binary framing which needs a custom parser. The
+   legacy OpenAI `/v1/completions` route also rejects streaming.
+2. **Non-text modalities pass through unscanned.** Image inputs,
+   audio, tool-call arguments, and function-call results are not
+   scanned for PII or injection. Text-only fields of multimodal
+   messages are still scanned. Vision/audio scanning will ship as a
+   separate firewall feature.
+3. **No per-route rate limiting beyond the existing scan endpoints.**
+   The proxy uses the same `runtime_security.scan` permission and the
+   shared rate limits that apply to the rest of the Runtime Security
+   surface. Per-tenant upstream quota enforcement is out of scope here
+   — the upstream provider is the source of truth for that.
+4. **Tool/function-call arguments are not scanned or redacted.** This
+   matches the scan endpoints' current behaviour. A malicious prompt
+   injection that routes through tool args would be caught at the
+   surface prose, not the structured arg values.
+
+---
+
+## 10. Observability
+
+Every proxy call writes one input event and (when not blocked on
+input) one output event through the existing
+`_persist_event()` helper. Events include:
+
+- `direction`: `"input"` or `"output"`
+- `verdict`: `"allow"` / `"redact"` / `"block"`
+- `provider`: `"openai"` or `"anthropic"`
+- `source_app`: `"proxy:openai"` or `"proxy:anthropic"` — use this to
+  segment proxy traffic from direct scan-endpoint traffic in the
+  dashboard filters.
+- `model`: the model name from the request body (input phase) or the
+  upstream response (output phase).
+- `injection_score` / `injection_label`, `pii_count`, `pii_categories`,
+  `text_length`, `latency_ms`, `blocked_reason` as usual.
+- `metadata_`: `{phase, location}` — `location` points at the blocked
+  field (e.g. `"messages[2].user"`, `"choices[0].message"`,
+  `"system"`) to speed up root-cause analysis.
+
+Block events also emit a `runtime_security.block` audit record via
+`create_audit_record()` only from the `/scan/*` endpoints today; the
+proxy emits only `RuntimeSecurityEvent` rows in the MVP. Extending the
+block path to write audit records is a small follow-up and will
+harmonise the two entry points.
+
+Analytics, event listing, health, and config endpoints
+(`/api/runtime-security/analytics`, `/events`, `/health`, `/config`)
+cover proxy traffic automatically because they query
+`RuntimeSecurityEvent` without filtering on `source_app`.
+
+---
+
+## 11. Testing
+
+`backend/tests/test_runtime_security_proxy.py` exercises the
+payload-walk helpers against a `FakeScanner` that returns canned
+verdicts keyed on substring matches. This keeps the tests fast
+(no HF weights, no DB, no network) and focused on the transformation
+logic that makes the `base_url` swap correct.
+
+Covered cases:
+
+- Clean pass-through for all three payload shapes.
+- In-place redaction for string content and array-of-parts content.
+- Block short-circuit raises `ProxyBlocked` with the expected
+  `location` string.
+- Assistant turns are excluded from input scans (both OpenAI and
+  Anthropic).
+- Array-of-parts content preserves non-text parts (images, tool_use).
+- Verdict folding returns the worst verdict across multiple fields.
+- Anthropic `system` string and list-of-text-blocks shapes.
+- Legacy OpenAI completions string-prompt and list-prompt handling.
+
+Run with:
+
+```bash
+python3 -m pytest backend/tests/test_runtime_security_proxy.py -q
+```
+
+End-to-end tests against a real `TestClient` with an in-process
+`httpx` mock for the upstream are a reasonable follow-up but are not
+required for the MVP since the route body is almost entirely glue
+around the tested helpers.
+
+---
+
+## 12. Dedicated Runtime Security Container
+
+For production deployments where you want the firewall to scale
+independently of the main Antidote API (and fail independently of the
+worker stack), a dedicated container ships alongside the main image.
+
+### Image layout
+
+| File                                        | Role                                                                                               |
+| ------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `backend/Dockerfile.runtime-security`       | Slim image built on `python:3.11-slim`, CPU-only torch, transformers.                              |
+| `backend/requirements.runtime-security.txt` | Minimal dep set — no celery, ultralytics, torchvision, pandas, sklearn, scikit-image.              |
+| `backend/app/runtime_security_main.py`      | Dedicated ASGI app that mounts **only** `runtime_security_router` and `runtime_security_proxy_router`. |
+
+The minimal app intentionally excludes everything outside the Runtime
+Security data-plane — no datasets, healing, playground, or
+auth/user-management routes. **App management endpoints
+(`/api/runtime-security/apps/...`) are also excluded** — Apps are
+created and configured against the main Antidote API, then their
+UUIDs and tokens are referenced by the dedicated container at
+runtime via `X-Antidote-App-Id` / `X-Antidote-App-Token`. Both
+containers share the same database, so Apps published from the main
+API are visible to the firewall instantly.
+
+The only endpoints it serves are:
+
+- `POST /api/runtime-security/scan/input`
+- `POST /api/runtime-security/scan/output`
+- `GET  /api/runtime-security/analytics`
+- `GET  /api/runtime-security/events`
+- `GET  /api/runtime-security/config`
+- `PUT  /api/runtime-security/config`
+- `GET  /api/runtime-security/health`
+- `POST /api/runtime-security/proxy/openai/v1/chat/completions`
+- `POST /api/runtime-security/proxy/openai/v1/completions`
+- `POST /api/runtime-security/proxy/anthropic/v1/messages`
+- `POST /api/runtime-security/proxy/openai-compatible/v1/chat/completions`
+- `POST /api/runtime-security/proxy/openai-compatible/v1/completions`
+- `POST /api/runtime-security/proxy/gemini/v1beta/models/{model}:{action}`
+- `POST /api/runtime-security/proxy/vertex/v1/projects/.../models/{model}:{action}`
+- `POST /api/runtime-security/proxy/bedrock/model/{modelId}/converse`
+- `GET  /healthz` — container liveness
+- `GET  /readyz` — container readiness (returns `ready` once the
+  injection model is warm)
+
+### Why a separate container?
+
+1. **Blast-radius isolation.** A bug in the dataset or healing stack
+   can crash or OOM the main API without ever touching the firewall.
+   If the proxy is what your production LLM traffic depends on, it
+   shouldn't share a process with batch scan workers.
+2. **Right-sized scaling.** The proxy is latency-sensitive and runs on
+   the critical path of every LLM call. The main API is not. You want
+   to scale them on different signals (QPS/latency for the proxy;
+   dataset-count and worker-queue depth for the main API).
+3. **Smaller attack surface.** The firewall image has no upload
+   endpoints, no admin surface, no healing routes, nothing to
+   exploit beyond the two wire-protocol shapes. Pen-testing the
+   firewall becomes a much smaller scope.
+4. **Faster image rebuilds and pulls.** The runtime-security image
+   does not pull ultralytics/torchvision/pandas/scikit-image. Cold
+   pulls are minutes faster in CI and autoscalers.
+
+### Shared database
+
+Both containers talk to the **same** PostgreSQL instance — scan events
+from the dedicated proxy container land in the same
+`runtime_security_events` table that the Antidote dashboard reads, so
+events show up in the UI automatically without any cross-service
+plumbing. The main API container continues to own migrations
+(`alembic upgrade head`); the runtime-security container never runs
+migrations on its own.
+
+### Docker Compose service
+
+The `runtime_security` service is defined in `docker-compose.yml`:
+
+```yaml
+runtime_security:
+  build:
+    context: ./backend
+    dockerfile: Dockerfile.runtime-security
+  environment:
+    DATABASE_URL: ${DATABASE_URL}
+    JWT_SECRET: ${JWT_SECRET}
+    RUNTIME_SECURITY_INJECTION_MODEL: ${RUNTIME_SECURITY_INJECTION_MODEL:-deepset/deberta-v3-base-injection}
+    RUNTIME_SECURITY_OPENAI_BASE_URL: ${RUNTIME_SECURITY_OPENAI_BASE_URL:-https://api.openai.com}
+    RUNTIME_SECURITY_ANTHROPIC_BASE_URL: ${RUNTIME_SECURITY_ANTHROPIC_BASE_URL:-https://api.anthropic.com}
+    RUNTIME_SECURITY_GEMINI_BASE_URL: ${RUNTIME_SECURITY_GEMINI_BASE_URL:-https://generativelanguage.googleapis.com}
+    RUNTIME_SECURITY_OPENAI_COMPAT_ALLOWLIST: ${RUNTIME_SECURITY_OPENAI_COMPAT_ALLOWLIST:-}
+    RUNTIME_SECURITY_OPENAI_COMPAT_EXTRA_BASES: ${RUNTIME_SECURITY_OPENAI_COMPAT_EXTRA_BASES:-}
+    # Bedrock signing — optional; can also be provided per-request via X-Antidote-AWS-* headers.
+    AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+    AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+    AWS_REGION: ${AWS_REGION:-}
+    # ... see compose file for the full environment
+  ports: ["8088:8088"]
+  depends_on: [db]
+  volumes:
+    - runtime_security_models:/models   # persist HF model cache
+  healthcheck:
+    test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8088/healthz"]
+```
+
+Run only the firewall stack (DB + proxy) without starting the main
+API or workers:
+
+```bash
+docker compose up -d db runtime_security
+```
+
+Once running, point clients at:
+
+```
+http://<host>:8088/api/runtime-security/proxy/openai/v1
+http://<host>:8088/api/runtime-security/proxy/anthropic
+```
+
+### Environment variables
+
+All the knobs from §8 apply to the dedicated container. Additional
+container-only env vars:
+
+| Variable                              | Default                              | Meaning                                                              |
+| ------------------------------------- | ------------------------------------ | -------------------------------------------------------------------- |
+| `RUNTIME_SECURITY_WORKERS`            | `2`                                  | uvicorn worker count inside the container.                           |
+| `RUNTIME_SECURITY_WARMUP_ON_START`    | `true`                               | Pre-load the injection classifier on startup so the first call is fast. |
+| `RUNTIME_SECURITY_CORS_ORIGINS`       | *(empty)*                            | Comma-separated list; when non-empty, CORS is enabled for those origins. |
+| `RUNTIME_SECURITY_DISABLE_INJECTION_MODEL` | *(unset)*                       | Set to `1` to skip loading the ML classifier (phrase heuristics only). |
+| `HF_HOME` / `TRANSFORMERS_CACHE`      | `/models`                            | Hugging Face cache location — mapped to the `runtime_security_models` volume. |
+
+### Model prefetch at build time
+
+The Dockerfile prefetches the default injection model during the build
+(`ARG PREFETCH_MODEL=1`) so the first request doesn't wait on a
+HuggingFace Hub download. For **air-gapped** builds set
+`--build-arg PREFETCH_MODEL=0` and either:
+
+- Mount a pre-populated `/models` volume at runtime, or
+- Ship a custom model via `RUNTIME_SECURITY_INJECTION_MODEL` pointing
+  at a local path, or
+- Set `RUNTIME_SECURITY_DISABLE_INJECTION_MODEL=1` to run in
+  phrase-heuristic-only mode.
+
+### Health and readiness
+
+- `GET /healthz` — always returns `200 {"status": "ok"}`. Use this for
+  liveness probes.
+- `GET /readyz` — calls `warmup()` on the injection model and returns
+  `ready` if the classifier loaded or `degraded` if the container is
+  running on heuristics only. Use this for readiness probes so the
+  first request doesn't pay the cold-start tax.
+- Kubernetes / ECS task definitions should set
+  `readinessProbe.httpGet.path = /readyz` and
+  `livenessProbe.httpGet.path = /healthz`.
+
+### Scaling guidance
+
+- The proxy is I/O-bound on upstream requests and CPU-bound on scanner
+  inference. Two workers per container is a reasonable starting point;
+  scale horizontally before scaling `--workers` past ~4 because the HF
+  pipeline holds its own thread-pool internally.
+- Model load is the slow step. Keep the container warm — aggressive
+  scale-to-zero will trade every cold start for ~5-15s on a fresh CPU
+  pod depending on the model.
+- Pin CPU limits high enough that DeBERTa inference doesn't starve on
+  a shared host. Typical cost: ~10-50 ms per prompt at 512 tokens on
+  modern x86-64.
+
+---
+
+## 13. Deployment Notes
+
+- **No new database migration.** The proxy reuses the existing
+  `runtime_security_events` table.
+- **No new permission.** Proxy routes enforce the existing
+  `runtime_security.scan` permission already used by `/scan/input`.
+- **TLS termination.** The proxy must sit behind TLS — any plaintext
+  deployment would leak both the client's upstream provider key and
+  the tenant's prompt data. The existing ALB/NGINX termination used
+  by the rest of the API is sufficient.
+- **Egress.** The backend process must be able to reach each upstream
+  provider you want to enable: `api.openai.com`, `api.anthropic.com`,
+  `generativelanguage.googleapis.com`, `{region}-aiplatform.googleapis.com`,
+  `bedrock-runtime.{region}.amazonaws.com`, and any OpenAI-compatible
+  hosts you allowlist. In air-gapped deployments, point the
+  `RUNTIME_SECURITY_*_BASE_URL` env vars at your internal gateway and
+  register self-hosted bases via
+  `RUNTIME_SECURITY_OPENAI_COMPAT_EXTRA_BASES`.
+- **Timeouts.** Default `RUNTIME_SECURITY_PROXY_TIMEOUT=60` seconds is
+  chosen to match typical chat-completion latency on large models.
+  Raise it for long-context requests that your upstream honors (e.g.
+  Claude 200k-context calls).

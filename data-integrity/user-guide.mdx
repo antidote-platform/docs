@@ -1,0 +1,846 @@
+---
+title: 'User Guide'
+description: 'Use Antidote to scan datasets for label errors, outliers, bias, leaks, prompt injection, and compliance gaps — then triage, fix, and audit the results.'
+---
+
+# Antidote — User Guide
+
+Antidote is a data‑integrity and ML safety platform. It scans datasets (image, text, medical imaging, detection/segmentation) for problems that silently break training: wrong labels, outliers, poisoned samples, hidden biases, leaked secrets, prompt injections, compliance gaps, and more. It then helps you triage, fix, report, and audit the results.
+
+This guide walks through every feature from the user's point of view: **where it lives, how to use it, and what results you should expect**. Internal algorithms are documented separately in `docs/engines.md`.
+
+---
+
+## Table of Contents
+
+1. [Getting Started](#1-getting-started)
+2. [Core Concepts](#2-core-concepts)
+3. [Projects](#3-projects)
+4. [Datasets](#4-datasets)
+5. [Running a Scan](#5-running-a-scan)
+6. [The Scanning Engines](#6-the-scanning-engines)
+7. [Scan Results & Triage](#7-scan-results--triage)
+8. [Healing (Data Repair)](#8-healing-data-repair)
+9. [Data Playground](#9-data-playground)
+10. [Compliance Mode](#10-compliance-mode)
+11. [Audit Trail](#11-audit-trail)
+12. [Dashboard & Widgets](#12-dashboard--widgets)
+13. [Reports & Exports](#13-reports--exports)
+14. [Scheduled Scans](#14-scheduled-scans)
+15. [Custom Rules](#15-custom-rules)
+16. [Integrations](#16-integrations)
+17. [API Keys & Programmatic Access](#17-api-keys--programmatic-access)
+18. [Users, Roles & Permissions](#18-users-roles--permissions)
+19. [Notifications & Webhooks](#19-notifications--webhooks)
+20. [Settings & Appearance](#20-settings--appearance)
+21. [Licensing & Feature Gates](#21-licensing--feature-gates)
+22. [Cloud vs On‑Prem](#22-cloud-vs-on-prem)
+23. [Troubleshooting & Support](#23-troubleshooting--support)
+
+---
+
+## 1. Getting Started
+
+### Sign in
+- Navigate to the Antidote URL provided by your administrator.
+- Use the email and password your admin configured (`ADMIN_EMAIL` / `ADMIN_PASSWORD` are used to bootstrap the first owner account).
+- Invited users receive an **Accept Invite** email; clicking the link sets their password and drops them directly into the workspace.
+- Password reset is available from the login screen.
+
+### First steps after login
+1. Open **Settings → General** to set your workspace name and timezone.
+2. Open **Settings → Integrations** and connect any data sources you plan to use (S3, GitHub, HuggingFace, Kaggle, Jira).
+3. Create your first **Project** (see §3), then upload a **Dataset** (see §4).
+4. Launch a scan from the dataset detail page.
+
+---
+
+## 2. Core Concepts
+
+| Concept       | What it means                                                                                          |
+| ------------- | ------------------------------------------------------------------------------------------------------ |
+| **Project**   | Workspace container. Holds datasets, scan history, report templates, integration settings, schedules. |
+| **Dataset**   | The actual data being analyzed — image folder, NIfTI volume, text corpus, etc.                         |
+| **Scan**      | A single run of one engine against one dataset version. Produces results, artifacts, and a severity.   |
+| **Result**    | A per‑item finding produced by a scan (one image, one paragraph, one case…).                           |
+| **Healing**   | The remediation phase: produce a "cured" copy of the dataset with the bad samples fixed or removed.    |
+| **Branch**    | A virtual version of a dataset, driven by a manifest CSV. Lets you compare / iterate without copying.  |
+| **Report**    | A generated document (PDF / HTML / JSON) describing findings, optionally in a compliance format.      |
+| **Severity**  | A four‑level rollup: `HEALTHY`, `UNHEALTHY-`, `UNHEALTHY+`, `CRITICAL`.                                |
+
+### Severity scale
+
+All scans roll up into the same four‑level scale so dashboards and reports stay consistent:
+
+| Label          | Meaning                                                                                |
+| -------------- | -------------------------------------------------------------------------------------- |
+| **HEALTHY**    | No issues found. Dataset is safe to use as is.                                         |
+| **UNHEALTHY−** | A small number of issues (typically < 15% of samples). Review before training.         |
+| **UNHEALTHY+** | Significant problems (15–50%). Training on this data is risky.                         |
+| **CRITICAL**   | Majority of samples flagged (≥ 50%) or severe leakage / poisoning. Do not train as‑is. |
+
+---
+
+## 3. Projects
+
+**Page:** `/projects` and `/projects/:id`
+
+Projects are the top‑level organizational unit. Everything — datasets, scans, reports, templates, integrations, schedules — lives inside a project.
+
+### What you can do
+- **Create** a project with a name, description, and optional icon/color.
+- **Edit / archive / delete** projects you own.
+- **Invite members** per project (combined with RBAC, see §18).
+- **Pin** frequently used projects so they appear at the top of the sidebar.
+- **Per‑project integrations:** a project can have its own S3 bucket, report templates, and scan schedule, independent from workspace defaults.
+- **Bulk operations:** remove all datasets / scans from a project in one click (destructive, audited).
+
+### Project detail page
+Shows:
+- KPI strip (datasets, scans, critical findings, last activity)
+- Dataset list with severity chips
+- Recent scan activity timeline
+- Project‑scoped report templates
+- Schedule configuration
+
+---
+
+## 4. Datasets
+
+**Page:** `/datasets` and `/datasets/:id`
+
+A dataset in Antidote is a versioned collection of files (images, text, or volumes) plus metadata and lineage.
+
+### Creating a dataset
+
+From **Datasets → New**, pick one of:
+
+| Source               | Accepts                                                                      |
+| -------------------- | ---------------------------------------------------------------------------- |
+| **Upload ZIP**       | A zipped folder tree; class = parent folder name                             |
+| **Upload folder**    | Drag‑drop a directory from your machine                                      |
+| **Paste text**       | Any plain‑text corpus (treated as a single text document)                    |
+| **GitHub repo**      | Public or private repo (via stored token). Optional path filter.             |
+| **HuggingFace hub**  | Any `datasets`‑compatible repo; supports splits, configs, sample cap         |
+| **Kaggle dataset**   | Pulls via Kaggle API using stored credentials                                |
+| **S3 / compatible**  | Bucket + prefix; uses the project's or workspace's S3 integration            |
+| **Jira attachments** | Pulls data attached to a Jira issue (see §16)                                |
+
+### Dataset detail page
+
+You'll see:
+- **Preview grid** for images (lazy‑loaded thumbnails, zoom, class filter)
+- **File tree** with size, type, and class info
+- **Action history** — every upload, scan, healing, branch, and edit, attributed to a user
+- **Branches tab** — list virtual branches (each branch is a manifest CSV picking which files are live)
+- **Lineage view** — graph of parent/child datasets produced by healing, branching, or imports
+- **Scan history** for this dataset
+- **Scheduler** — assign a cron schedule (see §14)
+- **Delete / rename / move to project**
+
+### Branches
+
+Branches let you maintain alternative versions of the same dataset without physically copying files. A branch is a manifest CSV listing which files are in/out, plus any label overrides. Use cases:
+- "Clean" branch after healing
+- "Balanced" branch with a subset
+- "Experimental" branch with tweaked labels for an A/B scan
+
+Switching branches on the detail page instantly changes which files are used in the next scan.
+
+---
+
+## 5. Running a Scan
+
+From a dataset detail page, click **New scan** and choose an engine. You can also queue multiple engines at once.
+
+### Scan parameters
+
+Every engine exposes the same top‑level controls:
+- **Use GPU** (if a GPU worker is available)
+- **Sample cap** — cap the number of samples to analyze (speeds up previews)
+- **Advanced parameters** — engine‑specific knobs (thresholds, sensitivity, noise fraction, consensus level…). Sensible defaults work for most datasets; advanced users can override them.
+
+### Scan lifecycle
+
+Scans move through: **queued → running → finished** (or **error**). Live progress is streamed to the UI via WebSocket (`/ws/api/scans/{scan_id}`):
+- A percentage bar
+- A phase label (`loading`, `extracting features`, `voting`, `persisting`…)
+- Real‑time count of flagged items
+
+A scan that errors shows the stack trace and lets you retry with the same parameters.
+
+### Cancelling
+
+Running scans can be cancelled from the scan detail page. Partial results are discarded; the scan is marked `error` with reason `cancelled`.
+
+---
+
+## 6. The Scanning Engines
+
+Antidote ships with seven engines. Each produces its own result schema and severity, but all share the same UI shell, progress stream, and healing hand‑off.
+
+> This section explains **what each engine detects and what the results mean**. For the algorithms behind them, see `docs/engines.md`.
+
+### 6.1 Mislabel 2D
+
+**What it is for:** Finding images that are in the wrong class folder.
+
+**Use when:** You have a standard image classification dataset (`class_a/`, `class_b/`, …) and suspect some images were mislabeled during annotation.
+
+**Inputs:** Folder‑structured image dataset (JPEG, PNG, WebP, TIFF).
+
+**Per‑image results:**
+| Field                 | Meaning                                                     |
+| --------------------- | ----------------------------------------------------------- |
+| `given_label`         | The label the dataset currently assigns                     |
+| `predicted_label`     | What Antidote thinks the label should be                    |
+| `label_quality_score` | Confidence in the *given* label (0–1). Low = suspect        |
+| `top_alt_label`       | Most likely alternative class                               |
+| `confidence_gap`      | How much the model prefers the alternative over the given label |
+| `is_issue`            | Final flag — true means "look at this image"                |
+
+**What to expect:** A ranked list of suspected mislabels. Each flagged image comes with the proposed correct label and a confidence score so you can triage from most to least confident.
+
+**Severity rollup:** based on the fraction of flagged samples.
+
+### 6.2 Mislabel 3D (Medical Imaging)
+
+**What it is for:** Same as 2D, but for **3D medical volumes** (NIfTI, DICOM‑exported PNG stacks) where each case is hundreds of slices.
+
+**Use when:** You're working with CT/MRI/ultrasound data organized per patient or per volume.
+
+**Inputs:**
+- `.nii.gz` volumes
+- NIfTI‑style PNG exports (`label_*/case001_0042.png`)
+- Optional segmentation metadata to restrict analysis to anatomical regions of interest
+
+**Per‑slice results:** everything 2D returns, plus:
+- **Case‑level probability** — whether the whole volume is suspect
+- **Neighbor review** — whether slices directly above/below disagree
+- **Multi‑label probability** — probability across the full label set (for multi‑label cases)
+
+**What to expect:** Flags are grouped by case. Singleton slice flags (only one suspect slice in an otherwise consistent case) are automatically suppressed unless the neighborhood agrees.
+
+### 6.3 Mislabel Broad (OOD + Mislabel)
+
+**What it is for:** A **superset of Mislabel 2D**. Besides mislabels it also finds **out‑of‑distribution (OOD) images** — things that don't belong in the dataset at all (logos, screenshots, unrelated photos, corrupted files).
+
+**Use when:** You're not sure whether the dataset is clean, or you've combined multiple sources and suspect contamination.
+
+**Issue types:** every flag is tagged with exactly one:
+- `mislabel` — definitely the wrong class
+- `ood` — does not belong in the dataset
+- `low_quality` — the model is very uncertain but no clear alternative
+
+**Result types shown in UI:**
+- **Mislabeled** — high confidence wrong label
+- **MislabeledCandidate** — probable but less certain
+- **MislabeledCandidateWeak** — weak signal
+- **Outlier** — OOD, not a mislabel
+
+**What to expect:** A cleaner picture than 2D alone, since it separates "wrong class" from "should not be in the dataset".
+
+### 6.4 Poisoning
+
+**What it is for:** Detecting **data poisoning** — backdoor triggers, adversarial patches, Glaze/Nightshade style‑transfer attacks, and generally any image that has been tampered with to manipulate training.
+
+**Use when:** You're ingesting data from untrusted sources (scraped web, user uploads, third‑party dumps) before training a production model.
+
+**Per‑image results:**
+| Field                    | Meaning                                                    |
+| ------------------------ | ---------------------------------------------------------- |
+| `is_poisoned`            | Binary flag                                                |
+| `fused_score`            | Overall suspicion score 0–1                                |
+| `decision_basis`         | Which detector fired (heuristic, VLM, trigger, depoison)   |
+| `trigger_bbox`           | Bounding box of the suspected trigger patch (if any)       |
+| `vlm_prompt_score`       | Vision‑language model confidence that the image is risky   |
+| `depoison_score`         | How much model behavior changes under counter‑perturbations |
+
+**What to expect:** A list of suspect images, each with a **visual explanation** — highlighted trigger regions, feature heatmaps, and a plain‑language summary of which signals fired.
+
+**Tunable sensitivity:** `sensitivity` (0 = strict, 1 = aggressive), `consensus_level` (how many signals must agree), and `aggressive` (quick preset for maximum recall).
+
+### 6.5 Text Analysis
+
+**What it is for:** Scanning text datasets for three problem classes simultaneously:
+1. **Leaked secrets and PII** (API keys, tokens, passwords, emails, IPs)
+2. **Prompt injection attempts** (system‑prompt overrides, jailbreaks)
+3. **Topic outliers** (paragraphs that don't belong with the rest)
+
+**Use when:** You're building fine‑tuning, RAG, or instruction datasets and need to sanitize them before training or publishing.
+
+**Per‑finding results:**
+| Field             | Meaning                                                   |
+| ----------------- | --------------------------------------------------------- |
+| `type`            | `secret`, `injection`, or `topic_outlier`                 |
+| `subtype`         | e.g. `github_pat`, `aws_access_key`, `explicit`, `heuristic`, `corpus_outlier` |
+| `score`           | Severity 0–1                                              |
+| `severity`        | `CRITICAL`, `MEDIUM`, or `INFO`                           |
+| `snippet`         | ≤ 200 chars around the match                              |
+| `start` / `end`   | Exact character offsets in the source document            |
+| `doc_id` / `paragraph_index` | Where in the corpus the finding lives         |
+
+**Built‑in patterns:** GitHub PATs, AWS access keys, JWTs, generic `api_key=…` / `password=…`, emails, IPv4, IPv6, plus a high‑entropy token heuristic.
+
+**Prompt injection phrases:** a curated list including "ignore previous instructions", "reveal the system prompt", "disregard the earlier rules", and 9 others, combined with jailbreak / role‑reassignment heuristics.
+
+**What to expect:** A searchable table of findings per document, with the match highlighted in context. Feedback (confirm / dismiss) is remembered across subsequent scans.
+
+### 6.6 Bias & Shortcut
+
+**What it is for:** Detecting **spurious correlations** — shortcuts a model might exploit instead of learning the real task. Examples:
+- Background color correlates with label
+- Watermarks/logos leak the class
+- Resolution, aspect ratio, or file metadata is informative
+- A confounder column (site, scanner, date) determines the outcome
+
+**Use when:** You are about to train a model and want to know whether it will *actually* learn the task or cheat.
+
+**Per‑hypothesis results:** Each hypothesis is a concrete claim ("images of class A are brighter than class B") with:
+| Field              | Meaning                                                   |
+| ------------------ | --------------------------------------------------------- |
+| `kind`             | Hypothesis type (border, global_stat, extra_field, metadata, embedding_cluster, patch_cluster, outer_ring, loc_patch, duplicates…) |
+| `shortcut_score`   | Evidence strength 0–100                                   |
+| `decision`         | `confirmed` / `suspected_strong` / `suspected` / `not_confirmed` |
+| `rationale`        | Why this decision was made                                |
+| `explain_plain`    | Human‑friendly explanation of the shortcut                |
+| `recommendations`  | Concrete mitigation steps                                 |
+| `artifacts`        | Visualizations (heatmaps, grids, plots)                   |
+| `suspects_path`    | CSV of most suspect images                                |
+
+**Per‑image flags:** `is_bias` (subtle), `is_shortcut` (strong), plus the underlying score.
+
+**Confounder columns:** drop an `extras.csv` alongside your images with columns like `site`, `scanner`, `date`, `patient_id` and the engine will test each one for label correlation and train/test shift.
+
+**What to expect:** A **bias results page** (`/datasets/:id/bias`) with the list of hypotheses, their decisions, and visualizations. Confirmed shortcuts come with specific recommendations ("crop the bottom 15% of each image to remove the watermark").
+
+### 6.7 Mask Quality (segmentation datasets)
+
+**What it is for:** Quality checks on segmentation masks — missing labels, inconsistent sizing, class imbalance, invalid values.
+
+**Use when:** You're preparing data for semantic or instance segmentation.
+
+**What to expect:** Per‑mask flags with a textual description of what's wrong and an overlay preview.
+
+---
+
+## 7. Scan Results & Triage
+
+**Page:** `/scans`, `/scans/:id`, `/scans/:id/results/:result_id`
+
+### Scan list (`/scans`)
+- Global table of all scans: dataset, engine, user, duration, severity chip, timestamp.
+- Filter by project, dataset, engine, status, severity, time range.
+- Bulk re‑run / cancel / delete.
+
+### Scan detail (`/scans/:id`)
+- **Summary** — total results, flagged count, severity, thresholds used.
+- **Threshold graph** — visualize the score distribution and where the cutoff landed; drag to tune and re‑preview.
+- **Representation (latent space) view** — an interactive 2D/3D projection (UMAP/t‑SNE/PCA) of all samples, colored by class, prediction, or issue flag. Click a point to jump to that result.
+- **Issue table** — paginated, sortable, filterable. Rows support inline preview and bulk actions.
+- **Artifacts** — downloadable JSON/CSV files produced by the engine.
+- **Re‑run / heal / export** actions in the top bar.
+
+### Result detail (`/results/:id`)
+- Full‑size preview of the sample
+- All scores and per‑signal breakdowns
+- **Comments** — threaded discussion with @mention
+- **Status** — `pending`, `confirmed`, `dismissed`, `fixed`. Feedback is persisted and used to adjust future scans (confirmed issues become weight, dismissed issues lose weight).
+- **Neighbors** — nearest samples in embedding space, for context
+- **Similar issues** — other flagged items with the same signature
+
+### Bulk triage
+From the issue table:
+- Select → Confirm / Dismiss / Mark for healing
+- Export selection to CSV
+- Send selection to Jira as an issue (one per row or one rolled‑up issue, with attachments)
+
+---
+
+## 8. Healing (Data Repair)
+
+**Page:** `/datasets/:id` → **Heal** button, or `/scans/:id` → **Heal from this scan**
+
+Healing takes a scan's findings and produces a **cured copy** of the dataset. You choose which fixes to apply:
+
+| Toggle                | Effect                                                                |
+| --------------------- | --------------------------------------------------------------------- |
+| **Fix mislabeled**    | Rewrite labels according to the engine's predictions                  |
+| **Remove outliers**   | Drop OOD / outlier samples entirely                                   |
+| **Remove poisoned**   | Drop samples flagged by the poisoning engine                          |
+| **Remove low quality**| Drop low‑confidence borderline cases                                  |
+| **Confidence floor**  | Only act on findings above a chosen confidence threshold              |
+
+### What you get back
+- A new **child dataset** (or a new branch on the same dataset) with lineage pointing at the source
+- A **zip download** of the cured contents
+- An action record in the audit trail
+- Optional automatic re‑scan of the cured dataset
+
+### Healing for text
+For text analysis, healing can:
+- Redact secrets in place (replace with `[REDACTED_<type>]`)
+- Strip injection paragraphs
+- Remove topic outliers
+
+### Running healing
+Healing runs as a background job with its own progress stream. You can watch it live or come back later — the result appears in the dataset's lineage graph.
+
+---
+
+## 9. Data Playground
+
+**Page:** `/playground`, `/playground/:session_id`
+
+The Data Playground is an **interactive exploration workspace** where you can poke at a dataset before running heavy scans. It's feature‑gated behind the `playground.access` permission.
+
+### What it does
+- Loads a dataset (or a subset) into an in‑memory working copy called a **session**
+- Lets you **view, edit, slice, and re‑label** samples from the browser
+- Runs **lightweight preview analyses** — embeddings, bias peeks, distributions, train/val/test splits — without kicking off a full scan
+- Exports what you built as a **new dataset version** or a **branch**
+
+### Session workflow
+1. **Create a session** from the Playground entry page. Pick a source (existing dataset, upload, or HuggingFace/Kaggle/S3 pull).
+2. Wait for preparation to finish (progress is streamed; cancellable).
+3. Once ready, the Playground opens with:
+   - A **data table** with pagination, sorting, and inline cell editing
+   - **Filters** by class, split, file size, metadata
+   - **Embedding view** — run an embedding pass and see a 2D projection of samples
+   - **Bias preview** — lightweight version of the bias engine
+   - **Distributions** — class balance, size, aspect ratio, token length…
+   - **Splits** — propose stratified / random / group splits and visualize them
+4. **Save** via one of:
+   - **Publish as dataset** — create a new named dataset from the working copy
+   - **Export CSV** — download the edited manifest
+   - **Update cells** — commit edits back to a source dataset's branch
+
+### Session lifecycle
+- Sessions are listed on the Playground home and can be **renamed**, **cancelled**, **retried**, or **deleted**.
+- Long‑idle sessions time out and are cleaned up automatically.
+- Each session has its own isolated workspace so multiple users can explore the same dataset in parallel.
+
+### What to expect
+The Playground is not a replacement for a full scan — it's meant for *quickly understanding* the data before you commit to analyzing it. Treat the bias peek and embedding views as directional.
+
+---
+
+## 10. Compliance Mode
+
+**Page:** `/compliance`
+
+Compliance Mode turns Antidote's scan findings and activity logs into **auditor‑ready reports**. It is feature‑gated behind the `FEATURE_COMPLIANCE_REPORTS` license flag.
+
+### Supported standards
+You can generate reports tailored to four standards:
+
+| Standard    | Code        | Focus                                                          |
+| ----------- | ----------- | -------------------------------------------------------------- |
+| **SOC 2**   | `soc2`      | Controls, change management, access, monitoring                |
+| **ISO 27001** | `iso27001` | Information security management                                |
+| **HIPAA**   | `hipaa`     | Protected health information handling                         |
+| **GDPR**    | `gdpr`      | Personal data handling, right to erasure, data minimization    |
+
+### Report depth
+Each report can be generated at one of three depths:
+- **Summary** — executive‑friendly one‑pager with KPIs and severity rollups
+- **Detailed** — per‑dataset breakdowns, scan history, remediation actions
+- **Exhaustive** — full per‑finding audit trail, parameter snapshots, lineage graphs
+
+### Output formats
+`PDF`, `HTML`, `JSON`, and `ZIP` (bundle: PDF + raw data + artifacts). Choose at generation time.
+
+### The Compliance page
+Lands you on a dashboard with:
+- **Posture overview** — HEALTHY / CRITICAL counts across all datasets and projects
+- **Attention queue** — datasets that need review (flagged issues, failing scans, missing reports)
+- **Activity timeline** — every compliance‑relevant action (uploads, scans, healing, deletes, permission changes), time‑filtered
+- **KPIs** — total datasets, active scans, failed scans, critical changes, total reports
+
+### Generating a report
+1. Pick a scope — single dataset, a project, or the whole workspace.
+2. Choose standard, depth, format, and time range.
+3. Click **Generate**. The report is queued; you get a notification when it's ready.
+4. Ready reports appear under **Reports** (§13), with download links and a preview.
+
+### Dataset lineage
+A built‑in lineage view traces every dataset back to its origin (upload, import, branch, healing, playground publish), which is exactly what auditors tend to ask for.
+
+---
+
+## 11. Audit Trail
+
+**Page:** Accessible from the top nav / Compliance page
+
+The Audit Trail is a **tamper‑evident log of everything that happens in the workspace** — who did what, when, to which object, and with what parameters.
+
+### What gets logged
+- Authentication events (login, logout, failed attempts)
+- User / role / invitation changes
+- Project, dataset, and scan CRUD
+- Healing runs with their parameters
+- Settings and integration changes
+- Custom rule changes
+- Report generation and downloads
+
+### What you can do
+- **Records page** — filter by actor, action type, object type, date range, severity
+- **Record detail** — full event payload, before/after diff, who, when, where
+- **Stats** — counts per actor, per action, per day; charts for trend analysis
+- **Parameter analytics** — see how scan parameters drift over time (useful for proving consistent practice in audits)
+- **Export** — CSV of any filtered view
+- **Ingest / import** — bring in external audit events (from a SIEM, for example) and merge them into the unified timeline
+- **Parameter schemas** — register custom parameter definitions that the audit trail should track (e.g. "model version", "clinical protocol")
+
+### Audit webhook
+You can push audit events to an external system in real time (§19).
+
+---
+
+## 12. Dashboard & Widgets
+
+**Page:** `/` (Dashboard)
+
+The Dashboard is your landing page. It's composed of **draggable, configurable widgets** that surface workspace health at a glance.
+
+### Available widgets
+
+| Widget                 | Shows                                                                      |
+| ---------------------- | -------------------------------------------------------------------------- |
+| **Stats**              | Scan activity over time (line / area / bar); configurable window (7/14/30/90 d) |
+| **Health**             | Severity distribution across all datasets                                  |
+| **Quick Actions**      | Shortcuts to new scan, new dataset, new project                            |
+| **Usage**              | Engine usage breakdown (donut / bar / line)                                |
+| **Chart: Activity**    | Timeseries of scans, healings, uploads                                     |
+| **Chart: Issues**      | Timeseries of flagged items by severity                                    |
+| **Recent Datasets**    | Most recently updated datasets with severity chips                         |
+| **Recent Activity**    | Last N events (scans, healings, uploads, user actions)                     |
+
+### Customization
+Each widget can be:
+- **Moved** (drag‑and‑drop grid)
+- **Resized**
+- **Configured** — time window, chart style (area / line / bar / donut), density (compact / comfortable), legend toggle
+- **Hidden** — toggle on/off from the Dashboard config panel
+
+Widget layout is saved per user.
+
+---
+
+## 13. Reports & Exports
+
+**Page:** `/reports`, `/reports/new`, `/reports/templates`
+
+Reports are shareable, archivable documents generated from your scan data.
+
+### Report types
+- **Ad‑hoc** — generated now from one scan or one dataset
+- **Compliance** — bound to a standard (SOC 2, ISO 27001, HIPAA, GDPR); see §10
+- **Scheduled** — generated automatically on a cron (see §14)
+- **Project report** — rolls up everything in a project
+
+### Formats
+- `PDF` — auditor ready, includes charts
+- `HTML` — lightweight, shareable link
+- `JSON` — raw data for pipelines
+- `ZIP` — bundle with PDF + data + artifacts + raw CSVs
+
+### Report templates
+Templates let you standardize reports across the team. You can edit:
+- **Sections** — cover page, KPIs, findings, methodology, appendix
+- **Branding** — logo, color palette, footer text
+- **Filters** — which datasets/scans are included
+- **Layout** — ordering and visibility of each block
+
+Templates can be **workspace‑level** or **project‑level**. A project‑level template can be marked as "default" so any new report in that project starts from it.
+
+### Export templates (for raw data)
+
+Separate from report templates, **export templates** let you define reusable CSV/JSON exports of scan results (which columns, which filter, which sorting). Use the editor at `/settings/export-templates` and apply them from any scan's Export menu.
+
+### Downloading & sharing
+- Every generated report has a download link
+- Reports older than a configurable retention window can be auto‑purged
+- Compliance reports include content preview JSON so you can confirm contents before sharing
+
+---
+
+## 14. Scheduled Scans
+
+**Page:** `/settings` → **General → Schedules**, or per‑dataset/project on the detail page
+
+Run scans automatically on a cron schedule so you catch drift and new issues without manual triggering.
+
+### What you can schedule
+- **Per‑dataset** — re‑scan a single dataset whenever new data lands
+- **Per‑project** — scan every dataset in a project in one sweep
+
+### Configuration
+- Cron expression (UI provides presets: hourly, daily at 02:00, weekly on Monday, etc.)
+- Engines to run
+- Parameter overrides
+- Email / webhook notification on completion
+- Auto‑cancel if the previous run is still going
+
+### What to expect
+Scheduled runs appear in the scan list with a clock icon and the schedule ID. Failures are surfaced in notifications and in the dashboard's Recent Activity widget.
+
+---
+
+## 15. Custom Rules
+
+**Page:** `/settings` → **Custom Rules**
+
+Custom Rules let you extend the detection patterns used by the scanning engines (today: **text analysis** PII / secret patterns, tomorrow: more).
+
+### What a rule looks like
+- **Name** — human label (e.g. "Internal employee ID")
+- **Pattern** — regex
+- **Severity** — `CRITICAL`, `MEDIUM`, or `INFO`
+- **Score** — base score applied when the rule matches (0–1)
+- **Scope** — global, per‑project, or per‑dataset
+- **Category** — e.g. `pii`, `secret`, `phi`
+
+### Testing a rule
+The rule editor has a **Test** button. Paste sample text, and Antidote runs the pattern against it and highlights matches in real time. This prevents broken regexes from landing in production scans.
+
+### Managing rules
+- List, create, edit, archive, delete
+- Enable / disable per scope without deleting
+- Bulk import / export rules as JSON
+
+---
+
+## 16. Integrations
+
+**Page:** `/settings` → **Integrations**
+
+Antidote talks to the outside world through a handful of typed integration settings, each with stored credentials, test buttons, and health indicators.
+
+### Built‑in integrations
+
+| Integration     | What it does                                                                               |
+| --------------- | ------------------------------------------------------------------------------------------ |
+| **GitHub**      | Import datasets from repos (public or private with token). Multiple tokens supported.     |
+| **HuggingFace** | Import datasets from the Hub. Supports retries on 429 rate limits. Multiple tokens.        |
+| **Kaggle**      | Import competitions / datasets via the Kaggle API. Multiple credential sets.               |
+| **S3 / S3‑compatible** | Read datasets from a bucket + prefix. Works with MinIO, Wasabi, etc. Has a **Test** button. |
+| **Jira**        | Create issues from triaged findings, sync status/comments back, receive Jira webhooks.    |
+| **Webhooks**    | Outbound notifications to any URL on scan / healing / audit events.                        |
+| **Audit webhook** | Real‑time push of audit trail events to a SIEM or log collector, with token auth.       |
+
+### Credential management
+- Credentials are stored encrypted (using `DATASET_TOKEN_SECRET` when configured)
+- You can rotate tokens without downtime
+- You can store multiple tokens per provider and pick one per import
+- The **Credentials Status** endpoint shows which providers are configured and healthy
+- Deleting a credential requires confirmation and is audit‑logged
+
+### Jira specifically
+- Create a configuration with site URL, integration email, API token, project key
+- Optional: sync status from Jira back into Antidote, sync comments
+- Optional: webhook secret for Jira → Antidote events
+- From any scan result you can push a Jira issue with the finding details and a snapshot attachment
+
+---
+
+## 17. API Keys & Programmatic Access
+
+**Page:** `/settings` → **API Keys**
+
+Everything in the UI is also available via the REST API (`/api/*`) documented in `openapi.yaml` and via Swagger at `/docs` / ReDoc at `/redoc`.
+
+### Creating a key
+1. Go to **Settings → API Keys → New key**.
+2. Name it (e.g. "CI pipeline", "Lab upload script").
+3. Pick **scopes** — you can create read‑only keys, or keys limited to dataset upload.
+4. Set an **expiration** (never, 30 days, 90 days, 1 year).
+5. Copy the shown token **immediately** — it is never displayed again.
+
+### Using a key
+Pass it as `Authorization: Bearer <token>` on any API request. Example:
+
+```bash
+curl -H "Authorization: Bearer $ANTIDOTE_TOKEN" \
+     https://antidote.example.com/api/datasets
+```
+
+### What you can do via API
+- Upload datasets (`POST /api/uploads/*`)
+- Launch scans (`POST /api/scans`)
+- Poll progress (`GET /api/scans/{id}`)
+- Stream live progress (`WS /ws/api/scans/{id}`)
+- Trigger healing (`POST /api/datasets/{id}/cure`)
+- Generate compliance reports (`POST /api/compliance/reports`)
+- Manage playground sessions, custom rules, schedules, projects, webhooks
+
+### Revocation
+Keys can be revoked at any time. Revocation is instant and audit‑logged. All requests using the revoked key start returning `401`.
+
+---
+
+## 18. Users, Roles & Permissions
+
+**Page:** `/settings` → **Users**, **Roles**, **Reviewers**
+
+### Built‑in roles
+- **Owner** — full control, including billing and license
+- **Admin** — manage users, settings, integrations
+- **Member** — create projects, datasets, scans
+- **Reviewer** — read + triage findings, cannot delete or change settings
+- **Viewer** — read‑only
+
+### Custom roles
+Admins can create custom roles by picking from a list of granular permissions, e.g. `scans.create`, `datasets.delete`, `compliance.generate_report`, `playground.access`, `support.manage`, `custom_rules.manage`.
+
+### Invitations
+- **Invite by email** → user receives an invite link, sets a password, picks a display name, lands in the workspace with the assigned role.
+- Invitations expire after a configurable window.
+- Pending invitations can be resent or revoked.
+
+### Per‑project access
+In addition to workspace roles, projects can have their own member lists. A user can be a workspace Member but an Admin inside a specific project.
+
+### Reviewers
+Reviewers are a specialized subset used by the triage workflows — they can be mentioned in result comments and assigned specific findings for review.
+
+### Profile
+Each user has a profile page (`/profile`) to update name, avatar, password, email, and notification preferences.
+
+---
+
+## 19. Notifications & Webhooks
+
+**Page:** `/settings` → **Notifications**
+
+### In‑app notifications
+- Toast + bell icon
+- Triggers: scan finished, scan failed, healing finished, report ready, invitation accepted, integration error, critical finding detected, scheduled scan outcome
+
+### Email notifications
+Per‑user opt‑in per event type. Workspace admins can set team‑wide defaults.
+
+### Outbound webhooks
+Configure in **Settings → Integrations → Webhooks**:
+- **URL** — your endpoint
+- **Events** — subset of scan / healing / report / audit events
+- **Secret** — HMAC signature for verification
+- **Retry policy** — Antidote retries with backoff on non‑2xx responses
+- **Test button** — sends a synthetic event so you can wire up the receiver side without running a real scan
+
+### Audit webhook
+A dedicated high‑volume channel for shipping audit events to a SIEM (see §11). Supports token rotation, disable without deletion, and a rotating token view so you always have exactly one active credential.
+
+---
+
+## 20. Settings & Appearance
+
+**Page:** `/settings`
+
+| Tab                    | Contains                                                                                       |
+| ---------------------- | ---------------------------------------------------------------------------------------------- |
+| **General**            | Workspace name, timezone, default engine parameters, feature toggles                           |
+| **Appearance**         | Theme (light / dark / system), accent color, density, logo upload                              |
+| **Healing**            | Default healing behavior, auto‑heal toggle, retention for cured zips                           |
+| **Notifications**      | Email, in‑app, webhook defaults                                                                |
+| **Security**           | Session timeout, password policy, 2FA (when enabled), IP allowlist (on‑prem)                   |
+| **Custom Rules**       | See §15                                                                                        |
+| **Integrations**       | See §16                                                                                        |
+| **API Keys**           | See §17                                                                                        |
+| **Users / Roles / Reviewers** | See §18                                                                                 |
+| **License**            | Shows current plan, enabled modules, seat count, expiry; paste a new license key               |
+
+---
+
+## 21. Licensing & Feature Gates
+
+Some features are gated behind license flags:
+
+| Feature flag                   | Gates                                                                   |
+| ------------------------------ | ----------------------------------------------------------------------- |
+| `FEATURE_BIAS_ANALYSIS`        | Bias & Shortcut engine                                                  |
+| `FEATURE_DATA_DRIFT`           | Data drift scans (when enabled)                                         |
+| `FEATURE_COMPLIANCE_REPORTS`   | Compliance page, compliance report generation                           |
+| `FEATURE_ADVANCED_EXPORTS`     | Export templates, JSON/ZIP bundled exports                              |
+| `FEATURE_HEALING`              | Healing workflows                                                       |
+
+If a feature is not licensed, the UI surfaces a **"Upgrade required"** banner on the relevant page instead of the feature itself, and API calls return `403 FEATURE_NOT_LICENSED` with the name of the missing flag.
+
+License status lives in **Settings → License** and shows what's enabled, when the license expires, and how to paste in an updated key.
+
+---
+
+## 22. Cloud vs On‑Prem
+
+Antidote ships in two flavors with the same UI and features:
+
+- **Cloud, single‑tenant** — managed by the Antidote team, one isolated deployment per customer
+- **On‑prem** — runs inside your network, air‑gap friendly, updated via a release manifest
+
+Operational differences:
+- On‑prem has an **IP allowlist** in Settings → Security
+- On‑prem updates are handled via a one‑command runbook (`docs/onprem-update-runbook.md`)
+- Cloud deployments integrate with managed Postgres and S3; on‑prem mounts local volumes (`./data` → `/data` in containers)
+
+From a user perspective, the screens, permissions, and results are identical.
+
+---
+
+## 23. Troubleshooting & Support
+
+### Live progress isn't updating
+The scan UI uses a WebSocket (`/ws/api/scans/{id}`). If your network blocks WebSockets, progress will still appear, just polled every few seconds instead of streamed.
+
+### Scan stuck in `queued`
+No worker is consuming that engine's queue. On‑prem: verify the Celery worker container is running. Cloud: open a support ticket.
+
+### HuggingFace import is slow or hits 429
+HuggingFace rate‑limits aggressive imports. Antidote automatically retries with exponential backoff. Check the retry counter on the import card; if it keeps failing, rotate to a fresh token.
+
+### Compliance page shows "Upgrade required"
+Your license doesn't include `FEATURE_COMPLIANCE_REPORTS`. Contact your account manager or paste an updated key in **Settings → License**.
+
+### Support & feedback
+- In‑app: **Help → Report a bug** or **Help → Feature request**. Attachments are saved to the feedback store and reach the Antidote team.
+- On‑prem: your administrator sees the tickets first and can escalate.
+- Docs: `README.md`, `docs/architecture.md`, `docs/engines.md`, `API_CONTRACT.md`, `openapi.yaml`.
+
+---
+
+## Appendix A — Scan Type Quick Reference
+
+| Engine            | Data type               | Finds                                                  | Output severity based on             |
+| ----------------- | ----------------------- | ------------------------------------------------------ | ------------------------------------ |
+| `mislabel`        | 2D images               | Wrong‑class images                                     | % flagged                            |
+| `mislabel_3d`     | 3D volumes / NIfTI      | Wrong labels, slice‑level + case‑level                 | % flagged (weighted)                 |
+| `mislabel_broad`  | 2D images               | Mislabels + OOD + low quality                          | Weighted (mislabels × 3 + outliers)  |
+| `poisoning`       | 2D images               | Backdoors, adversarial patches, Glaze/Nightshade       | % flagged + fused score              |
+| `text_analysis`   | Plain text corpus       | Secrets, PII, prompt injections, topic outliers        | Finding counts by severity           |
+| `bias_shortcut`   | 2D images (+ extras CSV) | Spurious correlations and shortcuts                    | % flagged + confirmed hypotheses     |
+| `mask_quality`    | Segmentation masks      | Invalid / inconsistent / missing masks                 | % flagged                            |
+| `yolo`            | Detection datasets      | Annotation issues for detection models                 | % flagged                            |
+
+---
+
+## Appendix B — URL Map
+
+| Route                                    | Purpose                                |
+| ---------------------------------------- | -------------------------------------- |
+| `/`                                      | Dashboard                              |
+| `/projects`, `/projects/:id`             | Projects                               |
+| `/datasets`, `/datasets/:id`             | Datasets                               |
+| `/scans`, `/scans/:id`                   | Scans list and detail                  |
+| `/results/:id`                           | Individual result triage               |
+| `/datasets/:id/bias`                     | Bias/shortcut results                  |
+| `/compliance`                            | Compliance dashboard & reports         |
+| `/playground`, `/playground/:session_id` | Data Playground                        |
+| `/reports`, `/reports/new`               | Reports                                |
+| `/reports/templates`                     | Report template editor                 |
+| `/settings`                              | Workspace settings (tabbed)            |
+| `/profile`                               | Current user profile                   |
+| `/auth`, `/reset-password`, `/accept-invite` | Auth flows                         |
+| `/docs`, `/redoc`                        | API documentation (Swagger / ReDoc)    |
+
+---
+
+*Antidote User Guide — compatible with Antidote Cloud and Antidote On‑Prem.*
