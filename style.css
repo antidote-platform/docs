@@ -1,4 +1,4 @@
-/* A touch more breathing room between the page header (title + description) and the body content. */
+/* Breathing room between the page header (title + description) and the body content. */
 main h1:first-of-type + p {
-  margin-bottom: 1rem;
+  margin-bottom: 2rem;
 }
