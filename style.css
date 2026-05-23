@@ -1,0 +1,20 @@
+/* Add breathing room between Mintlify's page header (title + description) and the body content. */
+
+/* Bump space below the page H1 title. */
+main h1:first-of-type {
+  margin-bottom: 2rem;
+}
+
+/* Bump space below the title-block description paragraph. */
+main h1:first-of-type + p,
+header + p {
+  margin-bottom: 2.5rem;
+}
+
+/* And add a little more headroom to the first body heading (H2 / H3) after the header block. */
+main h1 ~ h2:first-of-type,
+main h1 ~ h3:first-of-type,
+main header + h2,
+main header + h3 {
+  margin-top: 3rem;
+}

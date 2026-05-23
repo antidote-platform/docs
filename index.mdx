@@ -1,7 +1,9 @@
 ---
-title: "Blindsight Antidote"
+title: "Docs"
 description: "Three coordinated surfaces for AI safety: dataset integrity, an LLM‑traffic firewall, and endpoint DLP. One managed cloud workspace."
 ---
+
+<div style={{ height: "2.5rem" }} />
 
 ## What Antidote does
 
@@ -10,19 +12,25 @@ a managed cloud service. Use whichever surfaces (or all of them) fit
 your stack.
 
 <Columns cols={3}>
-  <Card title="Data Integrity" icon="shield-check" href="/data-integrity/overview">
-    Scan training datasets for label errors, outliers, poisoning,
-    bias, leaked secrets, and prompt‑injection payloads. Triage,
-    heal, and audit the results.
+  <Card
+    title="Data Integrity"
+    icon="shield-check"
+    href="/data-integrity/overview"
+  >
+    Scan training datasets for label errors, outliers, poisoning, bias, leaked
+    secrets, and prompt‑injection payloads. Triage, heal, and audit the results.
   </Card>
-  <Card title="Runtime Security" icon="bolt-lightning" href="/runtime-security/overview">
-    A drop‑in firewall for LLM traffic. Scan prompts before they
-    reach the model and responses before they reach the user.
+  <Card
+    title="Runtime Security"
+    icon="bolt-lightning"
+    href="/runtime-security/overview"
+  >
+    A drop‑in firewall for LLM traffic. Scan prompts before they reach the model
+    and responses before they reach the user.
   </Card>
   <Card title="DLP (endpoint)" icon="laptop" href="/dlp/overview">
-    A signed desktop agent that intercepts LLM traffic at the OS
-    network layer on every managed laptop. No application code
-    changes.
+    A signed desktop agent that intercepts LLM traffic at the OS network layer
+    on every managed laptop. No application code changes.
   </Card>
 </Columns>
 
@@ -34,31 +42,37 @@ you can adopt one (or two) without committing to the rest.
 
 <Columns cols={2}>
   <Card title="Quickstart" icon="rocket" href="/quickstart">
-    Sign in, scan your first dataset, and make your first
-    Runtime Security call in about ten minutes.
+    Sign in, scan your first dataset, and make your first Runtime Security call
+    in about ten minutes.
   </Card>
-  <Card title="Data Integrity overview" icon="book-open" href="/data-integrity/overview">
+  <Card
+    title="Data Integrity overview"
+    icon="book-open"
+    href="/data-integrity/overview"
+  >
     Core concepts, severity scale, and the map of every feature.
   </Card>
-  <Card title="Runtime Security overview" icon="code" href="/runtime-security/overview">
-    Three ways to integrate the LLM‑traffic firewall, plus
-    authentication.
+  <Card
+    title="Runtime Security overview"
+    icon="code"
+    href="/runtime-security/overview"
+  >
+    Three ways to integrate the LLM‑traffic firewall, plus authentication.
   </Card>
   <Card title="DLP overview" icon="laptop" href="/dlp/overview">
-    Endpoint coverage for shadow‑IT AI traffic across the whole
-    workforce.
+    Endpoint coverage for shadow‑IT AI traffic across the whole workforce.
   </Card>
 </Columns>
 
 ## How the surfaces relate
 
-|                      | Data Integrity                                          | Runtime Security                                             | DLP (endpoint)                                                  |
-| -------------------- | ------------------------------------------------------- | ------------------------------------------------------------ | --------------------------------------------------------------- |
-| **What it inspects** | Datasets at rest (images, text, NIfTI, detection)       | Live LLM prompts and responses from instrumented apps         | Live LLM prompts and responses from any app on a managed device  |
-| **When it runs**     | On upload, on schedule, on demand                       | On every request, inline                                     | On every request, on the device                                  |
-| **Who deploys it**   | The data / ML team                                       | The application team                                         | IT, via MDM                                                      |
-| **Integration**      | Web UI, REST API, scheduled scans                       | Reverse proxy (swap `base_url`) or REST scan endpoints       | Push the signed agent through Jamf, Kandji, Intune, GPO, SCCM    |
-| **Output**           | Issue lists, healed datasets, compliance reports        | `allow` / `redact` / `block` verdicts, events, drift charts  | Same verdicts, attributed to a device and a directory user        |
+|                      | Data Integrity                                    | Runtime Security                                            | DLP (endpoint)                                                  |
+| -------------------- | ------------------------------------------------- | ----------------------------------------------------------- | --------------------------------------------------------------- |
+| **What it inspects** | Datasets at rest (images, text, NIfTI, detection) | Live LLM prompts and responses from instrumented apps       | Live LLM prompts and responses from any app on a managed device |
+| **When it runs**     | On upload, on schedule, on demand                 | On every request, inline                                    | On every request, on the device                                 |
+| **Who deploys it**   | The data / ML team                                | The application team                                        | IT, via MDM                                                     |
+| **Integration**      | Web UI, REST API, scheduled scans                 | Reverse proxy (swap `base_url`) or REST scan endpoints      | Push the signed agent through Jamf, Kandji, Intune, GPO, SCCM   |
+| **Output**           | Issue lists, healed datasets, compliance reports  | `allow` / `redact` / `block` verdicts, events, drift charts | Same verdicts, attributed to a device and a directory user      |
 
 If you only need one surface today, start there. Wiring up the rest
 later is additive: workspaces, Apps, API keys, observability, and
