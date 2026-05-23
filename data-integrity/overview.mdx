@@ -1,0 +1,87 @@
+---
+title: "Overview"
+description: "What Data Integrity does, the core vocabulary, and the severity scale that every scan rolls up to."
+---
+
+Antidote Data Integrity scans your datasets for the problems that
+silently break ML training: wrong labels, outliers, poisoned samples,
+hidden biases, leaked secrets, prompt injections, and compliance
+gaps. It then helps you triage, fix, report, and audit the results.
+
+Use this page to learn the vocabulary; every other page in this
+section assumes it.
+
+## Getting started
+
+<Steps>
+  <Step title="Sign in">
+    Open the workspace URL in your welcome email and sign in with the
+    owner credentials your account manager sent you. Invited
+    teammates receive an **Accept Invite** email that sets their
+    password and drops them straight into the workspace.
+  </Step>
+  <Step title="Set workspace defaults">
+    Open **Settings, General** to set your workspace name and
+    timezone. The timezone controls how schedules and audit
+    timestamps render across the app.
+  </Step>
+  <Step title="Connect a data source">
+    Open **Settings, Integrations** and connect at least one source
+    you plan to scan. The supported list lives on the
+    [Integrations](/data-integrity/integrations) page.
+  </Step>
+  <Step title="Create a project, upload a dataset, scan it">
+    Projects organise everything. From there, upload a dataset and
+    launch a scan from the dataset detail page. The
+    [Quickstart](/quickstart) walks the full first run.
+  </Step>
+</Steps>
+
+## Core concepts
+
+| Concept       | What it means                                                                                          |
+| ------------- | ------------------------------------------------------------------------------------------------------ |
+| **Project**   | Workspace container. Holds datasets, scan history, report templates, integration settings, schedules. |
+| **Dataset**   | The actual data being analyzed: image folder, NIfTI volume, text corpus, detection set.                |
+| **Scan**      | A single run of one engine against one dataset version. Produces results, artifacts, and a severity.   |
+| **Result**    | A per‑item finding produced by a scan (one image, one paragraph, one case).                            |
+| **Healing**   | The remediation phase. Produces a cured copy of the dataset with the bad samples fixed or removed.     |
+| **Branch**    | A virtual version of a dataset, driven by a manifest CSV. Lets you compare and iterate without copying.|
+| **Report**    | A generated document (PDF / HTML / JSON) describing findings, optionally in a compliance format.      |
+| **Severity**  | A four‑level rollup: `HEALTHY`, `UNHEALTHY−`, `UNHEALTHY+`, `CRITICAL`.                                |
+
+## The severity scale
+
+Every engine rolls up to the same four‑level scale so dashboards,
+reports, and the audit trail stay consistent.
+
+| Label          | When you'll see it                                                                  |
+| -------------- | ----------------------------------------------------------------------------------- |
+| **HEALTHY**    | No issues found. Dataset is safe to use as is.                                      |
+| **UNHEALTHY−** | A small number of issues (typically < 15% of samples). Review before training.      |
+| **UNHEALTHY+** | Significant problems (15–50%). Training on this data is risky.                      |
+| **CRITICAL**   | Majority of samples flagged (≥ 50%) or severe leakage / poisoning. Do not train.    |
+
+<Tip>
+  The same severity badge shows up everywhere a dataset appears: the
+  dataset table, the dashboard widgets, the compliance report cover
+  page, and webhook payloads. Treat it as the single‑number summary.
+</Tip>
+
+## Where to next
+
+<CardGroup cols={2}>
+  <Card title="Projects" icon="folder-tree" href="/data-integrity/projects">
+    Organize datasets, schedules, and report templates by team or
+    initiative.
+  </Card>
+  <Card title="Datasets" icon="database" href="/data-integrity/datasets">
+    Upload, branch, version, and explore your data.
+  </Card>
+  <Card title="Running scans" icon="play" href="/data-integrity/scans">
+    Launch a scan, monitor progress, and triage results.
+  </Card>
+  <Card title="Engines" icon="microchip" href="/data-integrity/engines">
+    The seven scanning engines and what each one finds.
+  </Card>
+</CardGroup>

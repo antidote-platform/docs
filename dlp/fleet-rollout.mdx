@@ -1,0 +1,169 @@
+---
+title: "Fleet rollout"
+description: "Push the DLP agent to every employee laptop with no per‑user clicks. One enrollment token covers the whole fleet across macOS and Windows."
+---
+
+This is how a company rolls Antidote DLP out "like AD": one silent
+push from the MDM, the directory auto-provisions every employee, and
+every device binds to a real identity.
+
+There are two independent axes; you almost always want both.
+
+1. **Fleet software push.** IT deploys the agent to every machine
+   with no per-user clicks. macOS: `.pkg` + config profiles via Jamf,
+   Kandji, or Intune. Windows: `.msi` via Intune, GPO, or SCCM. One
+   workspace‑wide enrollment token is baked into the package; the
+   agent self‑enrolls on first run.
+2. **Directory sync + SSO.** Your IdP (Entra, Okta, Google) provisions
+   every employee into the workspace (SCIM) and binds each device to
+   the matching directory user on first sign‑in (OIDC).
+
+These are decoupled on purpose. The silent installer runs as
+SYSTEM / root and cannot know the human user, so identity is bound
+**after** enrollment via the SSO device‑code flow, opened
+automatically by the agent. The employee signs in once.
+
+See [Identity binding](/dlp/identity) for the directory and SSO side.
+This page is the IT‑side rollout.
+
+## 1. Create the fleet enrollment token
+
+<Steps>
+  <Step title="Open Devices & Enrollment">
+    **Runtime Security → Devices & Enrollment → create token.**
+  </Step>
+  <Step title="Copy the token">
+    Shown exactly once. Store it in your MDM secret vault. One token
+    covers the entire company fleet across both OSes.
+  </Step>
+  <Step title="(Optional) Restrict the token">
+    Token settings let you cap the number of activations, set an
+    expiry, and limit it to a specific directory group.
+  </Step>
+</Steps>
+
+## 2a. macOS push
+
+The macOS agent is a signed System Extension that hooks into the
+Network Extension framework, plus a `.pkg` that delivers it and a
+managed config profile that points the agent at your tenant.
+
+```bash
+# Prereq (out‑of‑repo): compile + Developer‑ID‑sign the System
+# Extension with the Network Extension entitlement, then notarize
+# the .pkg. Needs Xcode + an Apple Developer Team ID.
+
+mac-agent/system-extension/scripts/gen-ca.sh                 # org root CA
+mac-agent/system-extension/scripts/gen-mdm-bundle.sh \
+    --team-id ABCDE12345 \
+    --ca antidote-root.pem \
+    --cloud-base https://api.antidote.example.com \
+    --enroll-token antde_xxxxxxxxxxxxxxxxxxxx \
+    --out ./out/<workspace>
+```
+
+Push the four generated profiles via your MDM (Jamf, Kandji, Intune),
+in this order:
+
+1. **`sysext-policy`**, pre‑approves the System Extension.
+2. **`transparent-proxy`**, installs the Network Extension's
+   transparent‑proxy provider.
+3. **`trusted-CA`**, adds the org root CA to the device's trust
+   store.
+4. **`managed-config`**, points the agent at your tenant and embeds
+   the enrollment token.
+
+Then push the notarized `.pkg`. The agent reads the managed config,
+self‑enrolls fleet‑wide, and prompts each employee once for SSO
+identity binding.
+
+## 2b. Windows push
+
+The Windows agent runs as a SYSTEM service and uses WinDivert
+(user‑mode WFP) to capture outbound 443 to AI hosts.
+
+```text
+# Prereq (out‑of‑repo): Authenticode‑sign the MSI, service EXE, and
+# the bundled WinDivert driver. Needs an OV/EV code‑signing cert.
+
+msiexec /i Antidote.msi /qn ^
+  CLOUD_BASE=https://api.antidote.example.com ^
+  ENROLL_TOKEN=antde_xxxxxxxxxxxxxxxxxxxx
+```
+
+Deploy via:
+
+- **Intune** as a line‑of‑business app.
+- **GPO** software installation.
+- **SCCM** package deployment.
+
+The MSI writes `HKLM\SOFTWARE\Antidote`, imports the root CA to the
+machine trust store, and installs the SYSTEM service. The service
+self‑enrolls and runs the SSO identity‑binding flow.
+
+## 3. Verify rollout
+
+Open **Devices & Enrollment** in the dashboard. Each machine appears
+with an **Identity** column.
+
+| Identity status | What it means                                                              |
+| --------------- | -------------------------------------------------------------------------- |
+| `bound`         | The employee completed SSO. Traffic is attributed to a directory user.      |
+| `auto`          | OS username matched a directory user via SCIM. Useful for non‑user devices. |
+| `pending`       | Agent enrolled, identity binding not yet completed.                         |
+
+Tamper attempts (uninstall blocked by guardian, modified binary,
+disabled proxy) surface as high‑severity audit events under
+`POST /agent/tamper-events`.
+
+## Out-of-repo signing
+
+Certain steps **cannot** be done inside Antidote's source tree.
+They require external certificates and Apple / Microsoft developer
+relationships.
+
+| Step                                                       | Why it cannot be done here                                                                          |
+| ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| Compile + sign macOS System Extension                       | Needs Xcode + Apple Developer Team ID + the Network Extension entitlement.                          |
+| Notarize the macOS `.pkg`                                   | Needs Apple's notary service + Developer ID cert.                                                    |
+| Authenticode‑sign MSI / service / WinDivert                  | Needs an OV / EV code‑signing certificate.                                                           |
+| Signed WFP kernel driver (optional v2, admin‑tamper hardening)| Needs EV cert + Microsoft attestation signing.                                                       |
+
+Talk to your account manager for the signed bundles tailored to your
+organisation.
+
+## SAML
+
+SAML is schema‑ready in the backend but not enabled in this build.
+OIDC covers Entra, Okta, Google, and Ping. Open a ticket if you have
+a SAML‑only IdP.
+
+## Common workflows
+
+<AccordionGroup>
+  <Accordion title="Pilot a small group before fleet rollout">
+    1. Create a token in **Devices & Enrollment** restricted to one
+       directory group (`engineering-pilot`).
+    2. Push the agent to that group via your MDM's smart‑group
+       scoping.
+    3. Watch verdicts and tamper events for a week.
+    4. Once you're happy, mint a new token without the group restriction
+       and promote to the whole fleet.
+  </Accordion>
+
+  <Accordion title="Rotate the enrollment token">
+    1. Mint a new token in **Devices & Enrollment**.
+    2. Update the MDM payload to embed the new token. Existing
+       devices are unaffected; rotation only matters for new
+       enrollments.
+    3. Revoke the previous token once your MDM has rolled the new
+       payload to every staging point.
+  </Accordion>
+
+  <Accordion title="Replace a lost laptop">
+    1. Revoke the device row in **Devices & Enrollment**.
+    2. Ship the replacement with the same MDM policy as the rest of
+       the fleet. The new device self‑enrolls and binds to the same
+       directory user.
+  </Accordion>
+</AccordionGroup>

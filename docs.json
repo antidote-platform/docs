@@ -3,11 +3,14 @@
   "theme": "mint",
   "name": "Blindsight Docs",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#000000",
+    "light": "#FFFFFF",
+    "dark": "#000000"
   },
-  "favicon": "/favicon.svg",
+  "favicon": {
+    "light": "/favicon.png",
+    "dark": "/favicon-dark.png"
+  },
   "navigation": {
     "tabs": [
       {
@@ -23,15 +26,45 @@
           {
             "group": "Data Integrity",
             "pages": [
-              "data-integrity/user-guide",
-              "data-integrity/architecture"
+              "data-integrity/overview",
+              "data-integrity/projects",
+              "data-integrity/datasets",
+              "data-integrity/scans",
+              "data-integrity/engines",
+              "data-integrity/healing",
+              "data-integrity/playground",
+              "data-integrity/compliance",
+              "data-integrity/audit-trail",
+              "data-integrity/dashboard",
+              "data-integrity/automation",
+              "data-integrity/integrations",
+              "data-integrity/team",
+              "data-integrity/settings"
             ]
           },
           {
             "group": "Runtime Security",
             "pages": [
-              "runtime-security/guide",
-              "runtime-security/proxy"
+              "runtime-security/overview",
+              "runtime-security/apps",
+              "runtime-security/scan-api",
+              "runtime-security/reverse-proxy",
+              "runtime-security/tool-calls",
+              "runtime-security/verdicts",
+              "runtime-security/configuration",
+              "runtime-security/observability",
+              "runtime-security/sdk-examples",
+              "runtime-security/errors"
+            ]
+          },
+          {
+            "group": "DLP (endpoint)",
+            "pages": [
+              "dlp/overview",
+              "dlp/fleet-rollout",
+              "dlp/identity",
+              "dlp/devices",
+              "dlp/policies"
             ]
           }
         ]

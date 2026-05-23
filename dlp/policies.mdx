@@ -1,0 +1,181 @@
+---
+title: "Policies & agent API"
+description: "Centrally‑managed AI host rules, per‑App configuration that flows to the agent, and the backend endpoints the agent calls."
+---
+
+The DLP agent is a thin enforcement point. Every meaningful decision
+is made centrally in your Antidote workspace and pushed to the agent
+via `/agent/policy`. This page covers what that policy looks like and
+which backend endpoints the agent talks to.
+
+## What policy controls
+
+| Setting                       | What it does                                                                          |
+| ----------------------------- | ------------------------------------------------------------------------------------- |
+| **AI host rules**             | Which hostnames the agent intercepts (e.g. `api.openai.com`, `api.anthropic.com`).     |
+| **App attribution**           | Which Antidote App each host's traffic is attributed to.                              |
+| **Verdict actions**           | Whether the agent enforces `block` locally or just records (observe‑only mode).        |
+| **TLS MITM scope**            | Per‑host inclusion / exclusion. Banking, healthcare portals, etc. can be exempted.     |
+| **Redaction reveal**          | Whether the user sees `<EMAIL>` markers locally or just gets the original.             |
+| **Tamper sensitivity**        | What counts as a tamper event for this agent build.                                    |
+
+All of these are managed centrally. The agent never makes a local
+policy decision; it fetches the latest version from the cloud.
+
+### Where to edit policy
+
+The agent picks up policy from the App it's attributed to (see
+[Apps](/runtime-security/apps)). Thresholds, custom phrases, custom
+PII rules, tool policy, all the same as SDK‑mode Runtime Security.
+Edit them in **Runtime Security → Apps → \[your DLP App\] → Config**.
+
+The additional DLP‑only settings (AI host rules, MITM scope) live
+under **Runtime Security → Apps → \[your DLP App\] → DLP policy**.
+
+## AI host rules
+
+The agent only intercepts traffic to hosts on the AI host list. Every
+other connection passes through untouched.
+
+```json
+{
+  "ai_hosts": [
+    {"host": "api.openai.com",                "app_id": "app_abc...", "enforce": true},
+    {"host": "api.anthropic.com",             "app_id": "app_abc...", "enforce": true},
+    {"host": "generativelanguage.googleapis.com", "app_id": "app_abc...", "enforce": false},
+    {"host": "api.perplexity.ai",             "app_id": "app_def...", "enforce": true}
+  ],
+  "exclude_hosts": [
+    "online-banking.example.com"
+  ]
+}
+```
+
+| Field            | What it means                                                                       |
+| ---------------- | ----------------------------------------------------------------------------------- |
+| `host`           | Exact hostname or wildcard pattern (e.g. `*.openai.com`).                            |
+| `app_id`         | Which Antidote App owns this traffic. Determines thresholds and event attribution.   |
+| `enforce`        | `true`: agent blocks on `block` verdict. `false`: observe‑only.                       |
+| `exclude_hosts`  | Hostnames the agent never MITMs even if they match a rule above.                     |
+
+### Built-in host pack
+
+Antidote maintains a default host pack covering every supported
+provider. **DLP policy → Use default host pack** toggles it on; you
+can layer your own overrides on top.
+
+## Verdict enforcement on the device
+
+The agent runs the verdict logic locally for speed, but the **same
+scoring path** as the cloud. Each intercepted request:
+
+1. Is MITM'd locally with the org root CA.
+2. Goes to `/agent/scan` for a verdict.
+3. Is enforced according to the verdict:
+   - `allow`, forwarded to the upstream provider untouched.
+   - `redact`, PII spans replaced with category markers (`<EMAIL>`,
+     `<API_KEY>`, ...) before forwarding.
+   - `block`, returned to the calling app as a provider‑shaped error
+     so the source application surfaces a refusal.
+
+Observe‑only mode (`enforce=false`) records every verdict but never
+blocks. Useful when piloting a tighter threshold on a new App.
+
+## Backend endpoints (agent ↔ cloud)
+
+The agent uses a small, dedicated set of endpoints under
+`/api/runtime-security/agent/`. Same workspace, same scanners, same
+event store as in‑app Runtime Security.
+
+| Endpoint                                                | What it does                                                                                  |
+| ------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `POST /api/runtime-security/agent/enroll`                | Exchange the fleet enrollment token for a per‑device token.                                    |
+| `GET /api/runtime-security/agent/policy`                 | Fetch the current AI host rules + App attribution.                                              |
+| `POST /api/runtime-security/agent/scan`                  | Submit an intercepted prompt and get back a verdict.                                            |
+| `POST /api/runtime-security/agent/identity/start`        | Begin the OIDC device‑code identity binding flow.                                               |
+| `GET /api/runtime-security/agent/identity/status`        | Poll for completion of the binding.                                                             |
+| `POST /api/runtime-security/agent/tamper-events`         | Drain the local tamper log to the cloud.                                                        |
+| `POST /api/runtime-security/agent/heartbeat`             | Liveness ping. Drives the `Last seen` column on the fleet view.                                  |
+
+These endpoints share Apps, thresholds, and the event log with
+`/scan/input`, `/scan/output`, and the proxy routes. Dashboards do
+not distinguish DLP events from SDK events except via the `source`
+attribute on the event row.
+
+### Event source
+
+Events from the DLP agent carry:
+
+- `source = "agent"`.
+- `device_id = "<uuid>"` referencing the row in **Devices & Enrollment**.
+- `user_id = "<directory_user>"` once identity is bound.
+- `host = "api.openai.com"` (or whatever was intercepted).
+- The usual `verdict`, `injection`, `pii`, `redacted_text`,
+  `blocked_reason` fields.
+
+Filter on `source=agent` in [Observability](/runtime-security/observability)
+to slice DLP traffic separately.
+
+## Editing policy safely
+
+Policy changes propagate to every agent within ~30 seconds. To roll
+out a tightening change safely:
+
+<Steps>
+  <Step title="Note the current policy version">
+    The DLP policy page shows the active version number. Bookmark it
+    in case you need to roll back.
+  </Step>
+
+  <Step title="Apply the change to a pilot App">
+    Clone the App, apply the change to the clone, point a pilot
+    device group at the cloned App via **DLP policy → App
+    attribution**.
+  </Step>
+
+  <Step title="Watch drift">
+    Use [drift](/runtime-security/observability) on the cloned App
+    to see what shifts. PSI > 0.25 on `verdict` mix is your
+    canonical "something just changed" signal.
+  </Step>
+
+  <Step title="Promote to the full fleet">
+    Apply the change to the production App and push policy from
+    **Devices & Enrollment** for an immediate refresh, or wait the
+    cache TTL.
+  </Step>
+</Steps>
+
+<Warning>
+  Removing a hostname from `ai_hosts` stops the agent from MITMing
+  it. Existing connections complete; new requests go straight to the
+  upstream provider untouched. There's no grace period, confirm
+  you've moved that traffic to a different App or that you really
+  want it unscanned.
+</Warning>
+
+## Common workflows
+
+<AccordionGroup>
+  <Accordion title="Add a new LLM provider to coverage">
+    1. **DLP policy → AI hosts → Add.** Enter the provider's API
+       hostname.
+    2. Pick which App owns the traffic.
+    3. Toggle `enforce=true` once you're confident.
+  </Accordion>
+
+  <Accordion title="Exempt a sensitive internal site">
+    1. **DLP policy → Exclude hosts → Add.** Add the hostname.
+    2. The agent passes through it without MITM. Useful for sites
+       that pin certs or are otherwise sensitive to inspection.
+  </Accordion>
+
+  <Accordion title="Run observe‑only for a launch week">
+    1. Clone the production App into `staging_<original>`.
+    2. Flip every host rule to `enforce=false` on the clone.
+    3. Move pilot devices to the clone for a week. The verdict log
+       fills up without breaking anyone's workflow.
+    4. Review the verdict mix before flipping `enforce=true` on the
+       production App.
+  </Accordion>
+</AccordionGroup>

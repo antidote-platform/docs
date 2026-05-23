@@ -1,0 +1,172 @@
+---
+title: "Settings & licensing"
+description: "Where to find every workspace‑level knob, the license model, and the troubleshooting playbook."
+---
+
+`/settings` is the workspace‑level configuration hub. This page is the
+map of what lives where, what each tab does, and the licensing model
+behind feature gates.
+
+## The Settings tabs
+
+| Tab                          | Contents                                                                                                  |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------- |
+| **General**                  | Workspace name, timezone, default engine parameters, feature toggles, schedule list, export templates.      |
+| **Appearance**               | Theme (light / dark / system), accent color, density, logo upload.                                          |
+| **Healing**                  | Default healing toggles, auto‑heal preferences, retention window for cured zips.                            |
+| **Notifications**            | Email, in‑app, webhook defaults per event type. Team‑wide overrides for admins.                              |
+| **Security**                 | Session timeout, password policy, 2FA (when enabled), IP allowlist (when enabled).                          |
+| **Custom Rules**             | See [Schedules & custom rules](/data-integrity/automation).                                                 |
+| **Integrations**             | See [Integrations & webhooks](/data-integrity/integrations).                                                |
+| **API Keys**                 | See [Team & access](/data-integrity/team).                                                                  |
+| **Users / Roles / Reviewers**| See [Team & access](/data-integrity/team).                                                                  |
+| **License**                  | Current plan, enabled modules, seat count, expiry. Paste a new license key.                                  |
+
+## Appearance
+
+The Appearance tab controls how Antidote looks for everyone in the
+workspace.
+
+- **Theme**: light, dark, or follow system. Per user, but the default
+  is workspace‑wide.
+- **Accent color**: a single workspace‑wide color used for buttons,
+  links, and highlights.
+- **Density**: compact for power users on large screens, comfortable
+  for everyone else.
+- **Logo upload**: appears in the top‑left nav, on report cover
+  pages, and on shareable HTML report links.
+
+<Tip>
+  The logo you upload here also appears on the default report
+  template's cover page. To override per project, set a
+  project‑local report template (see [Compliance & reports](/data-integrity/compliance)).
+</Tip>
+
+## Healing defaults
+
+The Healing tab sets defaults for **every healing run in the
+workspace**:
+
+- **Default toggles**: which boxes are checked when the healing
+  dialog opens.
+- **Auto‑heal**: when set, every scan automatically queues a healing
+  run with the default toggles. Useful for noisy pipelines.
+- **Retention for cured zips**: how long the platform keeps healed
+  downloads before garbage collection. Lineage stays even after the
+  zip is purged.
+
+## Security
+
+| Setting           | Notes                                                                                       |
+| ----------------- | ------------------------------------------------------------------------------------------- |
+| Session timeout   | Idle timeout for browser sessions. Sub‑hour for highly regulated workspaces is common.       |
+| Password policy   | Minimum length, complexity, expiry. Applies to invited users at password set time.           |
+| 2FA               | Enable TOTP per user. When enforced workspace‑wide, users without 2FA cannot sign in.        |
+| IP allowlist      | Restrict console / API access to a list of CIDR ranges.                                       |
+
+## Licensing
+
+Some features are gated behind license flags. The License tab shows
+exactly what your workspace has access to.
+
+| Feature flag                   | Gates                                                                  |
+| ------------------------------ | ---------------------------------------------------------------------- |
+| `FEATURE_BIAS_ANALYSIS`        | The Bias & Shortcut engine.                                            |
+| `FEATURE_DATA_DRIFT`           | Data drift scans (when enabled).                                       |
+| `FEATURE_COMPLIANCE_REPORTS`   | The Compliance page and compliance report generation.                  |
+| `FEATURE_ADVANCED_EXPORTS`     | Export templates, JSON / ZIP bundled exports.                          |
+| `FEATURE_HEALING`              | Healing workflows.                                                     |
+
+If a feature isn't licensed, the UI surfaces an **Upgrade required**
+banner on the relevant page, and API calls return
+`403 FEATURE_NOT_LICENSED` with the missing flag in the body.
+
+### Updating your license
+
+1. Your account manager sends you an updated license key (a short
+   alphanumeric string).
+2. **Settings → License → Paste new key**.
+3. New modules light up within a minute.
+
+The License tab also shows the current expiry date, the seat count,
+and a usage summary so you can plan for renewals.
+
+## Quotas
+
+In addition to feature flags, your license has quotas:
+
+- **Seats**: how many active users you can have.
+- **Datasets and storage**: how much data you can keep at rest.
+- **Concurrent scans**: how many scans can run at once.
+- **Runtime Security calls**: per‑month quota for the firewall
+  (counted across `/scan/input`, `/scan/output`, `/scan/tool-call`,
+  and proxy calls).
+
+When you cross a quota threshold, the UI surfaces a banner. When
+you hit a hard limit, mutation APIs return an appropriate `402` or
+`429`.
+
+## Single‑tenant model
+
+Antidote Cloud is single‑tenant: each customer gets an isolated
+deployment, managed by the Antidote team, with its own database,
+storage, and worker pool. Your workspace URL, severity counts,
+licensing, and API keys are scoped to that one deployment.
+
+This means:
+
+- **Data isolation.** Your datasets, scans, and audit logs live only
+  in your tenant.
+- **Independent scaling.** Worker pools can be sized to your workload
+  without affecting other customers.
+- **Per‑tenant configuration.** Webhooks, custom rules, license
+  modules, and quotas apply only to your workspace.
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Live progress isn't updating">
+    The scan UI uses a WebSocket (`/ws/api/scans/{id}`). If your
+    network blocks WebSockets, progress still appears via polling
+    every few seconds. No action needed.
+  </Accordion>
+
+  <Accordion title="Scan stuck in queued">
+    No worker is consuming that engine's queue. Open a support
+    ticket; this is on the Antidote team to resolve on cloud.
+  </Accordion>
+
+  <Accordion title="HuggingFace import is slow or hits 429">
+    HuggingFace rate‑limits aggressive imports. Antidote retries with
+    exponential backoff automatically. Check the retry counter on
+    the import card; if it keeps failing, rotate to a fresh token
+    under **Settings → Integrations**.
+  </Accordion>
+
+  <Accordion title="Compliance page shows Upgrade required">
+    Your license doesn't include `FEATURE_COMPLIANCE_REPORTS`.
+    Contact your account manager or paste an updated key in
+    **Settings → License**.
+  </Accordion>
+
+  <Accordion title="API call returns 402 QUOTA_EXCEEDED">
+    You hit a per‑license quota. The response body includes a
+    `usage` snapshot and an `upgrade_url`. Wait until the period
+    resets or contact your account manager to top up.
+  </Accordion>
+
+  <Accordion title="Webhook deliveries stopped">
+    Antidote auto‑disables endpoints that consistently fail to
+    protect the queue. Check **Settings → Integrations → Webhooks**
+    for a disabled badge, fix the receiver, and re‑enable.
+  </Accordion>
+</AccordionGroup>
+
+## Support & feedback
+
+- **In‑app**: **Help → Report a bug** or **Help → Feature request**.
+  Attachments are saved with the submission and reach the Antidote
+  team.
+- **Email**: every workspace gets a dedicated support address.
+  Reference the workspace URL in the subject line.
+- For deeper reference, see the [API reference](/api-reference/introduction).

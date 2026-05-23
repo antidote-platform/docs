@@ -1,0 +1,182 @@
+---
+title: "Tool‑call scan"
+description: "Block dangerous tool invocations before your agent runs them. Sub‑millisecond, regex‑only, no model inference."
+---
+
+If your application uses an LLM to drive tool or function calls, scan
+the arguments **before executing them**. The tool‑call endpoint is
+regex‑only (no model inference), so it's sub‑millisecond on the warm
+path and safe to put in front of every dispatch.
+
+## `POST /api/runtime-security/scan/tool-call`
+
+```json
+{
+  "tool_name": "http_get",
+  "arguments": {"url": "http://169.254.169.254/latest/meta-data/iam"},
+  "source_app": "agent-runtime",
+  "metadata": {}
+}
+```
+
+The response is a verdict (`allow` / `redact` / `block`) with a list
+of triggering reasons.
+
+```json
+{
+  "uuid": "7e…",
+  "verdict": "block",
+  "reasons": [
+    {
+      "code": "ssrf.imds",
+      "severity": "block",
+      "detail": "URL targets cloud instance metadata",
+      "match": "169.254.169.254"
+    }
+  ],
+  "redacted_arguments": {"url": "http://169.254.169.254/latest/meta-data/iam"},
+  "pii": {"count": 0, "categories": [], "findings": []},
+  "arg_bytes": 67,
+  "blocked_reason": "ssrf.imds:URL targets cloud instance metadata"
+}
+```
+
+Rate limit: **20 requests / second / workspace**.
+
+## What it catches
+
+| Code                       | What triggers it                                                                                          |
+| -------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `tool.denied`              | Tool name on the workspace or App denylist.                                                                |
+| `tool.not_allowed`         | Allowlist configured and the tool is not on it.                                                            |
+| `tool.args_too_large`      | Arguments exceed `max_arg_bytes`.                                                                          |
+| `shell.dangerous`          | `rm -rf /`, fork bombs, `curl \| sh`, base64‑decoded execs, reverse shells.                                |
+| `sql.dangerous`            | Destructive DML (`DROP`, unscoped `DELETE` / `UPDATE`), stacked statements, `UNION SELECT FROM pg_*`.       |
+| `ssrf.imds`                | URL targets cloud instance metadata (`169.254.169.254`, `metadata.google.internal`).                       |
+| `ssrf.private_network`     | URL targets RFC1918 / loopback. Configurable per tenant.                                                   |
+| `ssrf.scheme`              | Disallowed schemes (`file://`, `gopher://`, `ldap://`, `dict://`).                                          |
+| `path.traversal`           | Repeated `../` segments.                                                                                   |
+| `path.sensitive`           | `/etc/passwd`, `~/.ssh/`, `~/.aws/credentials`, `~/.kube/config`, etc.                                      |
+
+Plus full PII detection on string leaves of the arguments, secrets
+in tool calls get the same treatment as secrets in prompts.
+
+## Tool policy (App‑level)
+
+Each App can define an allowlist, a denylist, or both:
+
+```json
+{
+  "tool_policy": {
+    "allowlist": [],
+    "denylist": ["delete_user", "drop_table"]
+  }
+}
+```
+
+- **Allowlist non‑empty + tool not present** → `tool.not_allowed`.
+- **Denylist non‑empty + tool present** → `tool.denied`.
+- **Both empty** → the generic catches (`shell.*`, `sql.*`, `ssrf.*`,
+  `path.*`) still apply.
+
+The workspace‑level config can layer a base denylist on top.
+
+## Wrapping it around your agent
+
+The minimal integration is one HTTP call before every tool dispatch.
+
+<Tabs>
+  <Tab title="Python">
+    ```python
+    import httpx
+
+    ANTIDOTE = httpx.Client(
+        base_url="https://api.your-antidote.com",
+        headers={
+            "X-API-Key": "ak_live_…",
+            "X-Antidote-App-Id": "app_…",
+        },
+        timeout=2.0,
+    )
+
+    def safe_dispatch(tool_name: str, arguments: dict):
+        r = ANTIDOTE.post(
+            "/api/runtime-security/scan/tool-call",
+            json={"tool_name": tool_name, "arguments": arguments},
+        )
+        r.raise_for_status()
+        v = r.json()
+        if v["verdict"] == "block":
+            raise PermissionError(v["blocked_reason"])
+        # On `redact`, use redacted_arguments so the tool runs with
+        # PII spans replaced.
+        return v["redacted_arguments"] if v["verdict"] == "redact" else arguments
+    ```
+  </Tab>
+
+  <Tab title="Node">
+    ```javascript
+    async function safeDispatch(toolName, args) {
+      const r = await fetch(
+        `${API_BASE}/api/runtime-security/scan/tool-call`,
+        {
+          method: "POST",
+          headers: {
+            "X-API-Key": process.env.ANTIDOTE_API_KEY,
+            "X-Antidote-App-Id": process.env.ANTIDOTE_APP_ID,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ tool_name: toolName, arguments: args }),
+        }
+      );
+      const v = await r.json();
+      if (v.verdict === "block") {
+        throw new Error(v.blocked_reason);
+      }
+      return v.verdict === "redact" ? v.redacted_arguments : args;
+    }
+    ```
+  </Tab>
+
+  <Tab title="curl">
+    ```bash
+    verdict=$(curl -sS -X POST $API_BASE/api/runtime-security/scan/tool-call \
+      -H "X-API-Key: ak_live_…" \
+      -H "X-Antidote-App-Id: app_…" \
+      -H "Content-Type: application/json" \
+      -d "$(jq -n --arg name "$tool" --argjson args "$tool_args" \
+              '{tool_name:$name, arguments:$args}')" \
+      | jq -r .verdict)
+
+    if [ "$verdict" = "block" ]; then
+      echo "tool blocked"
+      exit 1
+    fi
+    # ... execute the tool ...
+    ```
+  </Tab>
+</Tabs>
+
+## SSRF and private networks
+
+The default policy blocks instance‑metadata endpoints and RFC1918 /
+loopback addresses. For on‑prem agents that legitimately call private
+services, set `agentic.allow_private_network=true` on the workspace
+config (see [Configuration](/runtime-security/configuration)). The
+IMDS guard stays on regardless.
+
+<Warning>
+  Disabling the private‑network guard removes SSRF protection. Only
+  do it for trusted on‑prem agents inside controlled networks.
+</Warning>
+
+## What it doesn't do
+
+- The tool‑call endpoint inspects **arguments**, not return values.
+  If your tool returns data that itself needs scanning (a file
+  contents read, a SQL result row), scan it through
+  [Scan API](/runtime-security/scan-api) `/scan/output`.
+- It doesn't run the tool. Your agent runtime still executes; the
+  endpoint just tells it whether to.
+- It doesn't enforce semantic policies ("this user can only delete
+  their own files"). For those, layer authorization on top.

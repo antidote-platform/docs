@@ -42,8 +42,8 @@ The first thing to do once you're in:
     4. Watch progress stream in real time. Results land in the
        expanded row when the scan completes.
 
-    See [the user guide](/data-integrity/user-guide#5-running-a-scan)
-    for the other engines (broad / CLIP, poisoning, 3D, text).
+    See [Engines](/data-integrity/engines) for the other engines
+    (broad / CLIP, poisoning, 3D, text).
   </Tab>
 
   <Tab title="Text (anomaly + safety scan)">
@@ -115,21 +115,20 @@ curl -s -X POST $API_BASE/api/runtime-security/scan/input \
 A `verdict` of `block` or `redact` means the firewall caught a
 problem. The full integration paths (reverse proxy, scan API,
 tool-call scanning) are in the
-[Runtime Security guide](/runtime-security/guide).
+[Runtime Security overview](/runtime-security/overview).
 
 ## Where to next
 
 <CardGroup cols={2}>
-  <Card title="User guide" icon="book-open" href="/data-integrity/user-guide">
-    The full Data Integrity surface: projects, healing, compliance,
-    audit, custom rules.
+  <Card title="Data Integrity overview" icon="book-open" href="/data-integrity/overview">
+    Core concepts, severity scale, and the map of every feature.
   </Card>
-  <Card title="Runtime Security" icon="bolt-lightning" href="/runtime-security/guide">
+  <Card title="Runtime Security overview" icon="bolt-lightning" href="/runtime-security/overview">
     Endpoints, verdicts, thresholds, SDK examples for prompt and
     response scanning.
   </Card>
-  <Card title="Architecture" icon="diagram-project" href="/data-integrity/architecture">
-    The services, queues, and data flow behind the scenes.
+  <Card title="Engines" icon="microchip" href="/data-integrity/engines">
+    The seven scanning engines and what each one finds.
   </Card>
   <Card title="API reference" icon="terminal" href="/api-reference/introduction">
     OpenAPI-backed reference with try-it-out.

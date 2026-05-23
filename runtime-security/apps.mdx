@@ -1,0 +1,153 @@
+---
+title: "Apps"
+description: "Per‑surface configuration for thresholds, detectors, custom rules, tool policy, and privacy. One workspace can run many Apps side by side."
+---
+
+An **App** is a per‑workspace logical surface: a chatbot, a RAG
+assistant, a code agent. Each App owns its own thresholds, detectors,
+custom PII rules, custom phrases, tool policy, privacy mode, custom
+event params, dataset projection, and per‑App quotas. Every scan and
+proxy call is attributed to exactly one App via the
+`X-Antidote-App-Id` header.
+
+## Why Apps
+
+One workspace usually fronts several distinct LLM surfaces that
+warrant different security postures:
+
+- A healthcare chatbot needs strict PHI thresholds and may forbid
+  certain providers.
+- An internal code agent can tolerate looser injection thresholds
+  but needs strict tool policy.
+- A customer support bot wants standard thresholds and rich
+  ticketing custom params.
+
+Apps let one workspace run all of these under one license without
+their settings bleeding into each other, and keep their event streams
+cleanly separable in analytics.
+
+## Managing Apps
+
+Apps are managed under **Runtime Security → Apps** in the dashboard,
+or via the REST API.
+
+| Method   | Path                                              | Notes                                                             |
+| -------- | ------------------------------------------------- | ----------------------------------------------------------------- |
+| `GET`    | `/api/runtime-security/apps/templates`            | List built‑in templates.                                          |
+| `GET`    | `/api/runtime-security/apps`                      | List Apps in the caller's workspace.                              |
+| `POST`   | `/api/runtime-security/apps`                      | Create an App (optionally from a template).                       |
+| `GET`    | `/api/runtime-security/apps/{id}`                 | Read one App.                                                     |
+| `PATCH`  | `/api/runtime-security/apps/{id}`                 | Update App‑level metadata, status, quotas.                        |
+| `DELETE` | `/api/runtime-security/apps/{id}`                 | Soft‑delete (archive).                                            |
+| `POST`   | `/api/runtime-security/apps/{id}/clone`           | Clone an existing App.                                            |
+| `GET`    | `/api/runtime-security/apps/{id}/config-versions` | List versioned config history.                                    |
+| `PUT`    | `/api/runtime-security/apps/{id}/config`          | Publish a new config version.                                     |
+| `GET / POST / PATCH / DELETE` | `…/apps/{id}/custom-params[/{param_id}]` | Manage typed custom event params.                       |
+| `GET / POST / DELETE`         | `…/apps/{id}/tokens[/{token_id}]`        | Manage signed App tokens.                               |
+| `GET`    | `…/apps/{id}/dataset/summary`                     | Event count + dataset projection.                                 |
+| `GET`    | `…/apps/{id}/template-diff`                       | Drift between this App and its source template.                   |
+
+## Built‑in templates
+
+Cloning a template is the fastest way to get a production‑shaped App.
+Each template ships with sensible thresholds, a starter custom‑phrase
+list, custom PII rules where appropriate, custom params, and dataset
+field picks.
+
+| Template key            | Use case                          | Highlights                                                                                          |
+| ----------------------- | --------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `healthcare_chatbot`    | Patient‑facing PHI traffic        | Tighter thresholds (block 0.75 / redact 0.45), Swiss AHV / ICD‑10 / dosage rules.                    |
+| `rag_assistant`         | KB / retrieval‑augmented apps     | Strong injection defence on retrieved docs, RAG‑specific custom phrases, retrieval params.           |
+| `code_agent`            | Coding assistants with shell / SQL| Strict tool denylist, agentic guardrails on, secret detection.                                       |
+| `customer_support_bot`  | General support assistants        | Standard thresholds, ticket / CSAT custom params.                                                    |
+
+## App resolution headers
+
+| Header                   | Required                                                          | What it does                                                                                                |
+| ------------------------ | ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `X-Antidote-App-Id`      | Always                                                            | App UUID. The call is rejected with `400 APP_ID_REQUIRED` if missing.                                       |
+| `X-Antidote-App-Token`   | Only when the App has `require_signed_token=true`                 | Plaintext token issued via `…/apps/{id}/tokens`. Verified for signature and against the live token row.     |
+
+| Status code              | When                                                                                          |
+| ------------------------ | --------------------------------------------------------------------------------------------- |
+| `423 APP_DISABLED`       | App `status="disabled"`.                                                                       |
+| `410 APP_ARCHIVED`       | App was archived or deleted.                                                                   |
+| `429 APP_QUOTA_EXCEEDED` | `max_events_per_hour` / `max_events_per_day` hit. Includes `Retry-After`.                       |
+
+## Privacy modes
+
+Set per‑App via `privacy_mode` on create or update.
+
+| Mode                | What dashboard users see                                                                                  |
+| ------------------- | --------------------------------------------------------------------------------------------------------- |
+| `redacted_only`     | Only the `redacted_text` is ever shown. **Default.**                                                       |
+| `both_role_gated`   | Original text visible only to roles with the dataset‑PII view capability.                                  |
+| `hashed_pii`        | PII spans replaced with stable salted hashes, joinable across events without exposing the secret.          |
+| `user_choice`       | The caller picks per‑event via the `privacy_mode` metadata field.                                          |
+
+<Tip>
+  Use `hashed_pii` when you need to count distinct PII values (for
+  example "how many unique email addresses leaked this week") without
+  exposing the values themselves.
+</Tip>
+
+## Custom event params
+
+Each App declares typed event params (`string` / `number` / `boolean`
+/ `date` / `enum`). When you call `/scan/input` or `/scan/output`,
+attach a `custom_params` object; values are validated against the
+App's schema and stored on the event row for downstream filtering and
+dataset export.
+
+Required params reject the scan with `400 CUSTOM_PARAM_REQUIRED` if
+missing.
+
+```json
+{
+  "text": "patient asked about ICD-10 J45.9",
+  "custom_params": {
+    "patient_language": "de",
+    "contains_dosage": false
+  }
+}
+```
+
+## Versioned config
+
+Every config write creates a new `config_version_number` linked to
+the event row that produced it.
+
+- `GET …/apps/{id}/config-versions` returns the change history.
+- `change_summary` captures the operator's reason for the change.
+- The drift dashboard reports on config‑version transitions, so a
+  sudden change in verdict mix can be correlated to a config change.
+
+## Common workflows
+
+<AccordionGroup>
+  <Accordion title="Set up a staging clone of a production App">
+    1. `POST .../apps/{id}/clone` on the production App.
+    2. Rename the clone `staging_<original>`.
+    3. Lower its `max_events_per_hour` so a misconfigured client
+       can't burn quota.
+    4. Point your staging environment at the clone's `X-Antidote-App-Id`.
+  </Accordion>
+
+  <Accordion title="Roll out a tighter PII threshold safely">
+    1. Note the current config version on the App.
+    2. `PUT …/apps/{id}/config` with the new thresholds and a
+       `change_summary` like `tightening EU launch`.
+    3. Watch the drift dashboard for verdict mix changes over the
+       next 24 hours.
+    4. If anything looks wrong, `PUT` the previous config version
+       back; the history endpoint lets you roll back precisely.
+  </Accordion>
+
+  <Accordion title="Use signed tokens for hardened deployments">
+    1. Set `require_signed_token=true` on the App.
+    2. Mint a token via `POST .../apps/{id}/tokens`.
+    3. Distribute the token to your edge clients.
+    4. Rotate tokens by minting a new one alongside the old, then
+       deleting the old after the rotation window.
+  </Accordion>
+</AccordionGroup>

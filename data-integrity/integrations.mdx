@@ -1,0 +1,167 @@
+---
+title: "Integrations & webhooks"
+description: "Connect Antidote to the outside world: code repos, model hubs, object storage, ticketing, and outbound webhooks."
+---
+
+Antidote talks to the outside world through a handful of typed
+integrations. Each has stored credentials, a **Test** button, and a
+health indicator on the **Settings → Integrations** page.
+
+## Catalog
+
+| Integration            | What it does                                                                              |
+| ---------------------- | ----------------------------------------------------------------------------------------- |
+| **GitHub**             | Import datasets from public or private repos. Multiple tokens supported.                  |
+| **HuggingFace**        | Import datasets from the Hub. Retries with backoff on 429.                                |
+| **Kaggle**             | Import competitions and datasets via the Kaggle API.                                       |
+| **S3 / S3‑compatible** | Read datasets from a bucket and prefix. Works with MinIO, Wasabi, R2, Backblaze.           |
+| **Jira**               | Create issues from triaged findings, sync status and comments, receive Jira webhooks.    |
+| **Webhooks**           | Outbound notifications on scan, healing, and audit events.                                 |
+| **Audit webhook**      | High‑volume real‑time push of audit events to a SIEM, with token auth.                    |
+
+## Connecting an integration
+
+<Steps>
+  <Step title="Open Settings → Integrations">
+    The page shows a card per provider. Click the one you want to set
+    up.
+  </Step>
+  <Step title="Add credentials">
+    Provide what the provider needs. Antidote encrypts secrets at
+    rest (with `DATASET_TOKEN_SECRET` when configured).
+  </Step>
+  <Step title="Test the connection">
+    Every card has a **Test** button. Antidote performs a read‑only
+    probe and shows the result. Fix any error before saving.
+  </Step>
+  <Step title="(Optional) add more credentials">
+    GitHub, HuggingFace, and Kaggle support multiple credential sets,
+    useful when you want different limits or different organisations.
+    Each import picks one.
+  </Step>
+</Steps>
+
+## Provider notes
+
+<AccordionGroup>
+  <Accordion title="GitHub">
+    - Personal access tokens or fine‑grained tokens both work.
+    - Optional path filter on import lets you ingest a single
+      sub‑directory of a large monorepo.
+    - Tokens can be rotated without downtime; the next import picks
+      up the new value.
+  </Accordion>
+
+  <Accordion title="HuggingFace">
+    - Public datasets work without a token.
+    - Private or rate‑limited datasets need a token from
+      huggingface.co/settings/tokens.
+    - 429 retries use exponential backoff. The import card shows the
+      retry counter; rotate the token if it keeps failing.
+  </Accordion>
+
+  <Accordion title="Kaggle">
+    - Provide a `kaggle.json` payload (the file you download from
+      kaggle.com/settings).
+    - Antidote can pull competition data, dataset releases, and
+      kernel outputs.
+  </Accordion>
+
+  <Accordion title="S3 / S3‑compatible">
+    - For AWS S3, give it an IAM access key + secret with read access
+      to the bucket.
+    - For MinIO, Wasabi, R2, and friends, set the **Endpoint** field
+      to the provider URL and toggle **Path‑style** if required.
+    - The **Test** button performs a `HEAD` on the bucket; it
+      doesn't list objects, so it works even on tightly scoped
+      keys.
+  </Accordion>
+
+  <Accordion title="Jira">
+    1. Add the integration: site URL, integration email, API token,
+       project key.
+    2. *(Optional)* Configure inbound webhooks from Jira so issue
+       status / comment updates sync back into Antidote.
+    3. From any scan result row, **Send to Jira** opens a one‑click
+       modal with the finding details pre‑filled. Antidote attaches
+       a snapshot of the result.
+    4. The Jira issue carries a link back to the scan in Antidote.
+  </Accordion>
+</AccordionGroup>
+
+## Outbound webhooks
+
+Webhooks let your downstream systems react to events in Antidote.
+
+### What triggers a webhook
+
+You pick which events your endpoint receives:
+
+- Scan started, finished, errored.
+- Healing started, finished, errored.
+- Report generated.
+- Audit events (high volume, recommend a dedicated endpoint).
+
+### Configuring an endpoint
+
+<Steps>
+  <Step title="Add the webhook">
+    **Settings → Integrations → Webhooks → New**. Give it a name and
+    your URL.
+  </Step>
+  <Step title="Pick the events">
+    Multi‑select from the catalog. Each event has a stable payload
+    schema documented in the API reference.
+  </Step>
+  <Step title="Set a secret">
+    Antidote signs every payload with HMAC‑SHA256 using your secret
+    in the `X-Antidote-Signature` header. Verify on your end before
+    trusting the body.
+  </Step>
+  <Step title="Test it">
+    The card has a **Test** button that posts a synthetic event so
+    you can wire the receiver without running a real scan.
+  </Step>
+</Steps>
+
+### Retry behaviour
+
+- Non‑2xx responses are retried with exponential backoff for up to
+  one hour.
+- After that, the delivery is dropped and surfaced in the dashboard
+  as a failed integration.
+- Endpoints that consistently fail are auto‑disabled with a
+  notification, so a single bad webhook doesn't back up the queue.
+
+### Verifying the signature (Python)
+
+```python
+import hmac, hashlib
+
+def verify(body: bytes, signature: str, secret: str) -> bool:
+    expected = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, signature)
+```
+
+## Audit webhook
+
+A dedicated high‑volume channel for shipping every audit event to a
+SIEM or log collector. Separate from regular webhooks because the
+volume and reliability requirements are different.
+
+| Feature           | What you get                                                                       |
+| ----------------- | ---------------------------------------------------------------------------------- |
+| **Token auth**    | Each push carries a workspace‑scoped token. Rotate without disabling delivery.     |
+| **Token rotation**| New token visible alongside the previous one for one rotation window, then expires. |
+| **Disable without delete** | Pause delivery while keeping configuration intact.                          |
+| **Retry policy**  | Same exponential backoff as regular webhooks, but with longer retention.            |
+
+## In‑app and email notifications
+
+For when a webhook isn't right.
+
+- **In‑app notifications** appear as a bell badge and a toast. They
+  fire on the same events as webhooks. Per‑user opt‑in.
+- **Email notifications** are opt‑in per event type. Workspace
+  admins can set team‑wide defaults under
+  **Settings → Notifications**.

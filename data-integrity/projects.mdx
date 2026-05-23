@@ -1,0 +1,98 @@
+---
+title: "Projects"
+description: "Group datasets, scans, schedules, and integrations into the same logical workspace. Pin them, share them, and bulk‑manage from one screen."
+---
+
+A **Project** is the top‑level container in Antidote. Every dataset,
+scan, report template, integration setting, and schedule lives inside
+exactly one project. Use projects to mirror your team structure or
+your initiative structure: one project per model you're shipping, one
+per dataset family, one per regulated domain, whatever fits.
+
+## What a project gives you
+
+- **Scoped membership** beyond the workspace‑wide roles, a user can be
+  a workspace `Member` and a project `Admin`.
+- **Per‑project integrations** so a clinical project can point at a
+  different S3 bucket than a public dataset project.
+- **Per‑project report templates** so compliance reports come out
+  consistently branded for each domain.
+- **Per‑project schedules** so you can re‑scan an entire project on a
+  cadence with a single cron entry.
+
+## Project list (`/projects`)
+
+The project list is the entry point for the section. Each card shows
+the project name, a brief description, severity rollup, and the last
+activity date.
+
+<Steps>
+  <Step title="Create a project">
+    Click **New project**, pick a name and a description, optionally
+    set an icon and color. The creator becomes the project owner.
+  </Step>
+  <Step title="Pin frequently used projects">
+    Click the pin icon next to any project. Pinned projects float to
+    the top of the sidebar across the whole app.
+  </Step>
+  <Step title="Invite members">
+    From the project detail page, **Members → Invite**. Pick a role
+    (see [Team & Access](/data-integrity/team)) and Antidote sends an
+    invite email.
+  </Step>
+  <Step title="Archive when done">
+    Archived projects disappear from the sidebar but stay queryable
+    in compliance reports and the audit trail. Archive instead of
+    deleting whenever auditability matters.
+  </Step>
+</Steps>
+
+## Project detail page (`/projects/:id`)
+
+When you open a project, you land on a dashboard tailored to it.
+
+| Section                | What it shows                                                          |
+| ---------------------- | ---------------------------------------------------------------------- |
+| **KPI strip**          | Dataset count, scan count, critical findings, last activity.           |
+| **Dataset list**       | Every dataset in the project with severity chips and quick actions.    |
+| **Recent activity**    | Timeline of scans, uploads, healings, and member changes.              |
+| **Report templates**   | Project‑scoped templates that override workspace defaults.             |
+| **Schedules**          | Cron entries that scan datasets in this project.                       |
+| **Members**            | Users with explicit access, plus their project role.                   |
+
+## Common workflows
+
+<AccordionGroup>
+  <Accordion title="Set up a project for a regulated workload">
+    1. Create the project with a clear name (`clinical-radiology-v2`).
+    2. Under **Members**, add only the people with PHI clearance and
+       set workspace `Viewer`s up to `Reviewer` inside the project.
+    3. Under **Integrations**, point the project at the right S3
+       bucket and configure a project‑local report template branded
+       for the auditor.
+    4. Add a schedule that runs the relevant engines weekly and emails
+       the team on completion.
+  </Accordion>
+
+  <Accordion title="Hand a project off to a different team">
+    1. Promote the new lead to project `Admin`.
+    2. Make sure they own at least one workspace API key with the
+       right scopes (see [Team & Access](/data-integrity/team)).
+    3. Demote the previous lead to `Reviewer` if you want them to
+       retain read access, or remove them entirely.
+    4. Archive any datasets or schedules that the new team won't keep.
+  </Accordion>
+
+  <Accordion title="Bulk‑clean a project">
+    Use **Bulk operations** on the project detail page to delete every
+    dataset and scan in one click. This is destructive and audited;
+    confirmation is required, and the action surfaces under
+    `dataset_action_logs` in the [audit trail](/data-integrity/audit-trail).
+  </Accordion>
+</AccordionGroup>
+
+<Warning>
+  Project deletion is permanent and cascades to every dataset, scan,
+  and result inside the project. Archive instead if you might need
+  the data for compliance later.
+</Warning>

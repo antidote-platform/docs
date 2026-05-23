@@ -1,0 +1,153 @@
+---
+title: "Devices & enrollment"
+description: "The fleet view: device status, identity binding, tamper events, and lifecycle actions for every laptop running the DLP agent."
+---
+
+**Runtime Security → Devices & Enrollment** is the operational
+console for the DLP agent fleet. Every laptop with the agent
+installed shows up here, with identity status, last seen, traffic
+volume, and tamper history.
+
+## The fleet table
+
+| Column           | What it shows                                                                                |
+| ---------------- | -------------------------------------------------------------------------------------------- |
+| **Device name**  | Hostname reported by the agent. Editable for clarity (`design-lead-laptop`).                  |
+| **OS**           | `macOS 14.5`, `Windows 11 Pro 23H2`, etc.                                                     |
+| **Identity**     | `bound` / `auto` / `pending` / `service`. See [Identity binding](/dlp/identity).               |
+| **User**         | Directory user attached to the device, when identity is `bound` or `auto`.                    |
+| **Agent version**| Build number of the installed agent.                                                          |
+| **Status**       | `online`, `idle`, `offline`, `tampered`.                                                      |
+| **Last seen**    | Most recent ping from the agent.                                                              |
+| **Verdict mix**  | Counts of `allow` / `redact` / `block` for the device in the last 7 days.                     |
+| **Tamper events**| Number of high‑severity events in the last 30 days. Click to drill in.                        |
+
+### Filters
+
+Filter the table by:
+
+- **Identity state** (focus on every `pending` device).
+- **OS** (push a Windows‑only policy change).
+- **User or directory group** (cross‑check coverage for a team).
+- **Tamper status** (find devices where the agent isn't running clean).
+- **Last‑seen window** (find dormant laptops the agent isn't reaching).
+
+## Enrollment tokens
+
+The same page houses the workspace's enrollment tokens. Click
+**Tokens** to see:
+
+| Field             | Meaning                                                                                  |
+| ----------------- | ---------------------------------------------------------------------------------------- |
+| **Name**          | Free‑form label (`fleet-mac-pilot`, `staging`).                                           |
+| **Token**         | The plaintext value, shown once at creation.                                              |
+| **Activations**   | How many devices have already enrolled with this token.                                   |
+| **Cap**           | Optional ceiling on activations.                                                          |
+| **Expiry**        | Optional auto‑disable timestamp.                                                          |
+| **Restriction**   | Optional directory group; only devices whose user is in the group may activate.            |
+| **Status**        | `active`, `expired`, `revoked`.                                                           |
+
+### Lifecycle
+
+<Steps>
+  <Step title="Create">
+    **Tokens → New.** Pick a name; optionally cap activations, set an
+    expiry, restrict to a directory group.
+  </Step>
+  <Step title="Distribute">
+    Embed in your MDM payload (see [Fleet rollout](/dlp/fleet-rollout)).
+  </Step>
+  <Step title="Rotate">
+    Mint a new token, update MDM, then revoke the previous token.
+    Existing devices are unaffected by token revocation; rotation only
+    matters for new enrollments.
+  </Step>
+  <Step title="Revoke">
+    From the token row, **Revoke**. New enrollments fail; existing
+    devices keep working.
+  </Step>
+</Steps>
+
+## Per‑device actions
+
+Click any device row to open the detail panel.
+
+| Action             | What it does                                                                              |
+| ------------------ | ----------------------------------------------------------------------------------------- |
+| **Force re-bind**  | Triggers a new SSO device‑code flow on the agent.                                          |
+| **Revoke device**  | Disables the device token. Agent stops processing traffic and surfaces a tamper event.     |
+| **Pause scanning** | Temporarily marks the device as observe‑only. Traffic still flows, no block is enforced.   |
+| **Push policy**    | Forces the agent to re‑fetch `/agent/policy` immediately, useful for urgent rollouts.      |
+| **Reveal CA**      | Downloads the org root CA bundle the agent installed, in case IT needs to verify it.       |
+
+## Tamper events
+
+Every tamper attempt is captured. The agent's guardian process and
+the service report integrity events to `POST /agent/tamper-events`.
+
+| Event code                | What triggered it                                                                  |
+| ------------------------- | ---------------------------------------------------------------------------------- |
+| `agent.binary_modified`    | Agent binary checksum changed on disk.                                              |
+| `agent.service_disabled`   | Service stopped without the guardian's blessing.                                    |
+| `proxy.bypass_attempted`   | A process tried to route LLM traffic around the local proxy.                        |
+| `ca.removed`               | Org root CA was deleted from the device trust store.                                |
+| `network.firewall_off`     | OS‑level firewall toggled off in a way that exposes the proxy.                      |
+| `uninstall.blocked`        | A non‑admin uninstall attempt was blocked by the guardian.                          |
+
+Tamper events appear in the audit trail with severity `CRITICAL` and
+can be pushed to your SIEM via the
+[audit webhook](/data-integrity/integrations).
+
+### Investigating a tamper event
+
+<Steps>
+  <Step title="Open the device">
+    Click the row in the fleet table. The tamper history is the
+    bottom panel.
+  </Step>
+  <Step title="Read the event">
+    Each event has a `code`, `detail` (free‑text), timestamp, and a
+    snapshot of the agent and OS state at the time.
+  </Step>
+  <Step title="Take action">
+    For accidental tampering (a user uninstalled the agent), push
+    the agent again via MDM. For malicious attempts, follow your IR
+    runbook and consider locking the device with EDR.
+  </Step>
+</Steps>
+
+## Bulk operations
+
+From the fleet table:
+
+- **Select rows** with checkboxes.
+- **Push policy** to every selected device.
+- **Pause / resume scanning** for a group.
+- **Export to CSV** for offline reporting.
+
+Bulk actions are audited. The audit row records every device id touched.
+
+## Common workflows
+
+<AccordionGroup>
+  <Accordion title="Identify devices the agent isn't reaching">
+    1. Filter the fleet table by **Last seen > 7 days**.
+    2. Cross‑check against your asset list. Anyone still active in
+       SCIM but absent here probably has a broken agent push.
+    3. Re‑push the MDM payload from your console.
+  </Accordion>
+
+  <Accordion title="Audit DLP coverage for a team">
+    1. Filter by **User → directory group**.
+    2. Confirm every team member has at least one `bound` device.
+    3. Anyone with zero bound devices is either a non‑agent user or
+       has dropped off, escalate to IT.
+  </Accordion>
+
+  <Accordion title="Roll out a policy change progressively">
+    1. Change the policy in **Runtime Security → Apps**.
+    2. **Push policy** to a pilot group from the fleet table.
+    3. Watch verdict drift over the next 24h.
+    4. Roll out to the rest of the fleet from the same screen.
+  </Accordion>
+</AccordionGroup>

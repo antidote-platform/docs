@@ -1,0 +1,128 @@
+---
+title: "Schedules & custom rules"
+description: "Run scans automatically on a cadence and extend the detection patterns engines use."
+---
+
+Two related ways to keep the platform working for you without manual
+clicks: scheduled scans and custom detection rules.
+
+## Scheduled scans
+
+Catch drift and new issues as soon as they appear. A schedule re‑runs
+one or more engines on a cron expression, against either a dataset or
+every dataset in a project.
+
+### Where to set them up
+
+| From                              | Result                                                                  |
+| --------------------------------- | ----------------------------------------------------------------------- |
+| **Dataset detail → Scheduler**    | Schedule scoped to this dataset only.                                   |
+| **Project detail → Schedules**    | Schedule that fans out to every dataset in the project in one sweep.    |
+| **Settings → General → Schedules**| Workspace‑wide view to list, edit, or disable any schedule.             |
+
+### What you configure
+
+| Field                  | Notes                                                                                  |
+| ---------------------- | -------------------------------------------------------------------------------------- |
+| **Cron expression**    | UI provides presets (hourly, daily 02:00, weekly Monday, ...) or type your own.        |
+| **Engines**            | One or many. They run in parallel as worker capacity allows.                            |
+| **Parameter overrides**| Same controls as a manual scan (sample cap, GPU, advanced parameters).                  |
+| **Notifications**      | Email and / or webhook on completion. See [Integrations](/data-integrity/integrations). |
+| **Concurrency policy** | Auto‑cancel if the previous run is still going, or let them stack.                       |
+
+### Where you see them run
+
+Scheduled runs appear in the scan list with a clock icon and the
+schedule ID in the metadata column. Failures surface in:
+
+- The Dashboard's **Recent activity** widget.
+- The notification channel you configured.
+- The audit trail (with parameter snapshot).
+
+<Tip>
+  Use **Auto‑cancel previous run** on schedules that run more often
+  than scans typically finish. Stacked queued scans waste capacity
+  without giving you fresher data.
+</Tip>
+
+## Custom rules
+
+Custom rules extend the detection patterns the engines use. Today
+they're consumed by **Text Analysis** PII / secret detection;
+additional engines pick them up as the feature expands.
+
+### Rule structure
+
+| Field             | What it controls                                                              |
+| ----------------- | ----------------------------------------------------------------------------- |
+| **Name**          | Human label, e.g. `Internal employee ID`.                                      |
+| **Pattern**       | Regex. Validated for catastrophic backtracking before save.                    |
+| **Severity**      | `CRITICAL`, `MEDIUM`, or `INFO`. Drives the finding's badge.                    |
+| **Score**         | Base score applied when the rule matches (0–1).                                |
+| **Scope**         | Global, per‑project, or per‑dataset.                                            |
+| **Category**      | Free‑form, typical values: `pii`, `secret`, `phi`, `custom`.                    |
+| **Enabled**       | Toggle without deleting.                                                        |
+
+### Where to manage them
+
+**Settings → Custom Rules.** The page lists every rule with its
+scope, category, severity, and enabled state. From here you can:
+
+- **Create** a new rule.
+- **Edit** an existing rule's pattern, score, or scope.
+- **Archive** to hide from active scans without deleting.
+- **Delete** outright.
+- **Bulk import / export** rules as JSON. Useful for moving rules
+  between workspaces.
+
+### Testing before you save
+
+Every rule editor has a **Test** button. Paste sample text; Antidote
+runs the pattern against it and highlights matches in real time. Use
+this to confirm you're not over‑matching before pushing the rule
+live.
+
+<Steps>
+  <Step title="Draft the rule">
+    Pick a name. Write the regex.
+  </Step>
+  <Step title="Test it">
+    Paste sample text that should match and text that should not.
+    Tweak until both are correct.
+  </Step>
+  <Step title="Pick a scope">
+    `Global` for org‑wide patterns. `Project` or `Dataset` when the
+    rule only makes sense in context.
+  </Step>
+  <Step title="Save and confirm">
+    The rule becomes live within ~30 seconds (a small cache TTL).
+    Next text scan will use it.
+  </Step>
+</Steps>
+
+### Common patterns
+
+<AccordionGroup>
+  <Accordion title="Internal identifiers">
+    Most companies have a structured ID format (`EMP-123456`,
+    `CUST-AB1234`, `INV-2025-…`). Capture each as a rule with
+    severity `MEDIUM` and category `pii`.
+  </Accordion>
+
+  <Accordion title="Proprietary phrases">
+    Code names for unreleased products, M&A targets, internal project
+    names. Severity `CRITICAL`, category `secret`, score 0.9.
+  </Accordion>
+
+  <Accordion title="Regulatory identifiers">
+    Industry‑specific identifiers (Swiss AHV, US SSN, EU VAT, ICD‑10
+    codes). Use one rule per format, scope `Global`, severity
+    `CRITICAL`.
+  </Accordion>
+</AccordionGroup>
+
+<Warning>
+  Catastrophic‑backtracking guard is on by default. A pattern that
+  could blow up at scale is rejected before save with a clear error.
+  If a rule is rejected, simplify or anchor the pattern.
+</Warning>

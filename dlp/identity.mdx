@@ -1,0 +1,190 @@
+---
+title: "Identity binding"
+description: "Connect your IdP via SCIM and OIDC so every employee is provisioned automatically and every device binds to a real directory user."
+---
+
+The DLP agent is installed by IT as SYSTEM / root. It cannot know
+which employee is using the machine on its own. Identity is bound
+**after** enrollment, using your IdP's directory and SSO flows.
+
+This page covers the two complementary mechanisms:
+
+- **SCIM** to provision users into the Antidote workspace from your
+  IdP.
+- **OIDC** + the device‑code flow to bind each device to a specific
+  directory user.
+
+Both live under **Runtime Security → Directory & SSO** in the
+dashboard.
+
+## SCIM provisioning
+
+SCIM (System for Cross‑domain Identity Management) is how your IdP
+keeps the Antidote workspace's user list in sync with your directory.
+When you hire someone, they appear in Antidote automatically. When
+you off‑board them, they're disabled.
+
+### Set it up
+
+<Steps>
+  <Step title="Add a SCIM provider in Antidote">
+    Open **Runtime Security → Directory & SSO → SCIM** and click
+    **Issue token**. Antidote returns:
+
+    - A bearer token (shown once). Copy it.
+    - A base URL: `https://<cloud>/scim/v2`.
+  </Step>
+
+  <Step title="Wire it in your IdP">
+    In Entra, Okta, Google, or your IdP of choice, add a custom SCIM
+    application. Paste the base URL and bearer token. Map standard
+    SCIM attributes (`userName`, `emails[primary]`, `name.givenName`,
+    `name.familyName`, `active`).
+  </Step>
+
+  <Step title="Assign users and groups">
+    Assign the directory groups whose members should be provisioned
+    into Antidote. Your IdP pushes them immediately.
+  </Step>
+
+  <Step title="Verify in Antidote">
+    Under **Settings → Users**, look for the SCIM source badge on
+    each row. Users land with `provisioning_source=scim` and are
+    auto‑activated.
+  </Step>
+</Steps>
+
+### Behavior
+
+| Event in IdP                       | Effect in Antidote                                                              |
+| ---------------------------------- | ------------------------------------------------------------------------------- |
+| User created and assigned          | User auto‑created in the workspace with the mapped role.                         |
+| User updated (name, email, group)  | Antidote row updated within ~1 minute.                                           |
+| User deactivated                   | Soft‑disabled in Antidote. Sessions revoked, API keys disabled.                  |
+| User reactivated                   | Re‑enabled in Antidote with the same row and history.                            |
+
+### Group‑to‑role mapping
+
+Under **Directory & SSO → Group mappings**, map IdP groups to
+Antidote roles. Common pattern:
+
+| IdP group              | Antidote role | Reason                                            |
+| ---------------------- | ------------- | ------------------------------------------------- |
+| `eng-leads`            | `Admin`       | Manage Apps and DLP policies.                      |
+| `compliance-team`      | `Reviewer`    | Triage findings, no destructive actions.           |
+| `all-employees`        | `Viewer`      | Read‑only access to dashboards.                    |
+| `engineering`          | `Member`      | Standard contributor inside Data Integrity.        |
+
+A user with multiple matching groups gets the **highest** role.
+
+## OIDC single sign‑on
+
+OIDC is how employees sign into the Antidote dashboard and how the
+DLP agent binds a device to a directory user.
+
+### Configure your provider
+
+<Steps>
+  <Step title="Register Antidote as an OIDC client">
+    In your IdP, create a new app and copy the `client_id` and
+    `client_secret`. Set the redirect URI to:
+
+    ```
+    https://<cloud>/api/auth/sso/<provider-uuid>/callback
+    ```
+
+    Where `<provider-uuid>` is generated when you add the provider in
+    Antidote.
+  </Step>
+
+  <Step title="Add the provider in Antidote">
+    **Runtime Security → Directory & SSO → OIDC providers → Add**.
+    Provide:
+
+    - `client_id`
+    - `client_secret`
+    - `discovery_url` (e.g. for Entra:
+      `https://login.microsoftonline.com/<tenant>/v2.0/.well-known/openid-configuration`)
+  </Step>
+
+  <Step title="Test the flow">
+    Click **Test sign-in** on the provider card. Antidote opens the
+    IdP, you authenticate, and it redirects back with a confirmation
+    page.
+  </Step>
+</Steps>
+
+### Supported providers
+
+OIDC covers **Entra**, **Okta**, **Google Workspace**, and **Ping**.
+Any standards‑compliant OIDC IdP that publishes a discovery document
+works.
+
+SAML is schema‑ready in the backend but not enabled in this build.
+
+## Device‑code identity binding
+
+Once the agent is installed on a laptop, it needs to know **which
+directory user** is sitting at the machine. The agent runs the OIDC
+device‑code flow (RFC 8628):
+
+1. The agent posts to `/agent/identity/start`.
+2. Antidote returns a short verification code and opens the IdP sign‑in
+   page in the user's default browser.
+3. The employee signs in with their normal corporate credentials.
+4. The agent polls `/agent/identity/status` until the IdP confirms
+   the binding.
+5. The device row in **Devices & Enrollment** flips from `pending` to
+   `bound`, with the directory user attached.
+
+The flow is one‑click for the employee. They sign in once on first
+boot; the binding persists for the lifetime of the device.
+
+### Re‑binding
+
+A device can be re‑bound to a different directory user:
+
+- **Automatically** when SCIM marks the previous user inactive.
+- **Manually** by an admin from **Devices & Enrollment** → device
+  row → **Force re‑bind**.
+
+Re‑binding triggers a new device‑code flow on the agent.
+
+## Auto identity for non‑user devices
+
+For devices that don't have a human user (lab machines, build
+servers), the agent sets `Identity = auto` when:
+
+- The OS username matches a directory user email's local part, and
+- SCIM has already provisioned that user.
+
+Mark these devices in **Devices & Enrollment** as `service` so they're
+filtered out of the regular user fleet view.
+
+## Common workflows
+
+<AccordionGroup>
+  <Accordion title="On‑board a new employee">
+    1. HR adds them to the directory.
+    2. SCIM provisions them into Antidote (~1 min).
+    3. IT ships a managed laptop. On first boot, the agent enrolls
+       and prompts for SSO identity binding.
+    4. Employee signs in with corporate credentials. Device is
+       `bound` to their directory user.
+  </Accordion>
+
+  <Accordion title="Off‑board an employee">
+    1. HR deactivates them in the directory.
+    2. SCIM disables them in Antidote.
+    3. Their device is auto‑revoked. The agent stops processing
+       traffic and flags the machine for reclaim.
+  </Accordion>
+
+  <Accordion title="Spin up a CI build host">
+    1. IT pushes the agent with the regular MDM policy.
+    2. Set `Identity` to `service` and rename the device row to
+       `ci-runner-04`.
+    3. Traffic from the runner is attributed to `service:ci-runner-04`
+       so you can filter it out of user‑centric reports.
+  </Accordion>
+</AccordionGroup>

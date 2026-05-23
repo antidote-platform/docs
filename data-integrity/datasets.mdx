@@ -1,0 +1,140 @@
+---
+title: "Datasets"
+description: "Upload from anywhere, version with branches, trace lineage, and explore samples before kicking off a scan."
+---
+
+A dataset in Antidote is a versioned collection of files (images,
+text, or 3D volumes) plus its metadata and full lineage. Every scan,
+every healing run, and every compliance report ties back to a specific
+dataset version.
+
+## Creating a dataset
+
+From **Datasets → New**, pick a source. Each source captures
+credentials once and remembers them for next time.
+
+<Tabs>
+  <Tab title="Local upload">
+    | Source            | Accepts                                                        |
+    | ----------------- | -------------------------------------------------------------- |
+    | **Upload ZIP**    | A zipped folder tree. Class name is taken from the parent folder. |
+    | **Upload folder** | Drag‑drop a directory from your machine. Same class convention. |
+    | **Paste text**    | Plain‑text corpus, treated as a single text document.           |
+
+    Antidote does Zip Slip protection on extraction, so a malformed
+    archive cannot escape the dataset directory.
+  </Tab>
+
+  <Tab title="Code / model hubs">
+    | Source              | What you provide                                                  |
+    | ------------------- | ----------------------------------------------------------------- |
+    | **GitHub repo**     | Repo URL, branch, optional path filter, token if private.         |
+    | **HuggingFace hub** | Repo id, optional config / split, optional sample cap.            |
+    | **Kaggle dataset**  | Kaggle slug. Uses workspace‑level Kaggle API credentials.         |
+
+    HuggingFace imports honor 429 rate limits with exponential
+    backoff. The retry counter is visible on the import card; rotate
+    the token in **Settings → Integrations** if retries keep failing.
+  </Tab>
+
+  <Tab title="Object storage">
+    | Source              | What you provide                                                       |
+    | ------------------- | ---------------------------------------------------------------------- |
+    | **S3**              | Bucket + prefix. Uses the project's or workspace's S3 integration.     |
+    | **S3‑compatible**   | Same shape, against MinIO, Wasabi, R2, Backblaze, etc.                 |
+
+    Use the **Test** button on the S3 integration card before kicking
+    off a large import to confirm the credentials and the bucket
+    region.
+  </Tab>
+
+  <Tab title="From a ticket">
+    | Source              | What you provide                                                       |
+    | ------------------- | ---------------------------------------------------------------------- |
+    | **Jira attachments**| Issue key. Pulls every attachment on the issue as a dataset.           |
+
+    Useful when an engineer files a "dataset looks wrong" ticket: you
+    can import the attached samples and run a scan straight away.
+  </Tab>
+</Tabs>
+
+## Dataset detail page (`/datasets/:id`)
+
+The dataset page is your home base for one piece of data.
+
+| Tab / section       | What it does                                                                                       |
+| ------------------- | -------------------------------------------------------------------------------------------------- |
+| **Preview grid**    | Lazy‑loaded thumbnails for image datasets, zoom on hover, class filter.                            |
+| **File tree**       | The dataset's files with size, type, and class. Right‑click for actions (rename, move, exclude).    |
+| **Action history**  | Every upload, scan, healing, branch, and edit, attributed to a user, timestamped, exportable.      |
+| **Branches**        | Virtual versions of the dataset, each backed by a manifest CSV.                                    |
+| **Lineage**         | Graph of parent / child datasets produced by healing, branching, or imports.                       |
+| **Scan history**    | Past scans against this dataset, with severity and duration.                                       |
+| **Scheduler**       | Assign a cron schedule. See [Automation](/data-integrity/automation).                              |
+| **Settings**        | Rename, move between projects, configure webhooks, change webhook URL, delete.                     |
+
+<Tip>
+  Click any thumbnail in the preview grid to open a full‑size viewer
+  with class metadata, EXIF, and the list of every scan that has
+  touched that file. Useful while triaging a single weird sample.
+</Tip>
+
+## Branches
+
+Branches let you maintain alternative versions of the same dataset
+without physically copying files. Each branch is a manifest CSV that
+declares which files are in or out, plus any label overrides.
+
+**Typical uses:**
+
+- A **clean** branch after healing, so you can A/B train on cured vs
+  raw data without losing the original.
+- A **balanced** branch with a downsampled subset for fast iteration.
+- An **experimental** branch with tweaked labels for an A/B scan.
+
+Switching branches on the dataset detail page instantly changes which
+files are used in the next scan. Every branch keeps its own scan
+history.
+
+<Steps>
+  <Step title="Create a branch">
+    From the **Branches** tab, click **New branch**, give it a name,
+    optionally describe how it differs from the main branch.
+  </Step>
+  <Step title="Define what's in it">
+    Either upload a manifest CSV (`path,split,label,include`) or use
+    the inline editor to flip the include flag on individual files.
+  </Step>
+  <Step title="Run a scan against it">
+    The branch shows as a selector on the **New scan** screen. Pick
+    it and Antidote scans only the branch's manifest.
+  </Step>
+  <Step title="Promote or discard">
+    Branches can be **promoted** to become the dataset's main view, or
+    **deleted** without affecting any other branch.
+  </Step>
+</Steps>
+
+## Lineage
+
+The lineage view is a directed graph showing where a dataset came from
+and what was produced from it.
+
+- Healing produces a child dataset with a `healed_from` edge.
+- Branching produces a child with a `branched_from` edge.
+- Playground publishes produce a child with a `playground_session`
+  edge.
+- Imports keep a reference to the original `source_uri`.
+
+Auditors typically ask "where did this training corpus come from?" and
+lineage is the single answer. Compliance reports include the same
+graph automatically.
+
+## What to expect
+
+- Dataset uploads under ~5 GB usually appear within seconds.
+- Larger uploads stream progress via the WebSocket and resume
+  cleanly if the network drops.
+- Statistics (`valid_images`, `invalid_images`, `classes`,
+  `class_count`) populate as soon as ingestion finishes; you don't
+  have to wait for a scan to see them.

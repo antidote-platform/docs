@@ -1,0 +1,250 @@
+---
+title: "Engines"
+description: "The seven scanning engines, what each one finds, when to use it, and what its output means."
+---
+
+Antidote ships with seven engines. They share the same UI shell,
+progress stream, threshold graph, and healing hand‑off, but each
+produces its own result schema. Pick the one that matches your data
+type and the kind of problem you're worried about.
+
+This page explains every engine from a usage perspective. Algorithmic
+details (model choices, calibration math, defaults) live in our
+internal references; the operational fields below are what you'll
+actually triage against.
+
+## Quick reference
+
+| Engine            | Data type                   | Catches                                                | Severity driver                                  |
+| ----------------- | --------------------------- | ------------------------------------------------------ | ------------------------------------------------ |
+| `mislabel`        | 2D images                   | Wrong‑class images                                     | % flagged                                        |
+| `mislabel_3d`     | 3D volumes / NIfTI          | Wrong labels, slice + case level                       | % flagged (weighted)                             |
+| `mislabel_broad`  | 2D images                   | Mislabels + OOD + low quality                          | Weighted (mislabels × 3 + outliers)              |
+| `poisoning`       | 2D images                   | Backdoors, adversarial patches, Glaze / Nightshade     | % flagged + fused score                          |
+| `text_analysis`   | Plain text corpus           | Secrets, PII, prompt injections, topic outliers        | Finding counts by severity                       |
+| `bias_shortcut`   | 2D images (+ extras CSV)    | Spurious correlations and shortcuts                    | % flagged + confirmed hypotheses                 |
+| `mask_quality`    | Segmentation masks          | Invalid / inconsistent / missing masks                 | % flagged                                        |
+
+## Mislabel 2D
+
+**Use it when** you have a standard image classification dataset
+(`class_a/`, `class_b/`, ...) and suspect some images were mislabeled.
+
+**Inputs.** Folder‑structured image dataset (JPEG, PNG, WebP, TIFF).
+
+**Per‑image fields:**
+
+| Field                 | Meaning                                                             |
+| --------------------- | ------------------------------------------------------------------- |
+| `given_label`         | The label the dataset currently assigns.                            |
+| `predicted_label`     | What Antidote thinks the label should be.                           |
+| `label_quality_score` | Confidence in the **given** label (0–1). Low means suspect.         |
+| `top_alt_label`       | Most likely alternative class.                                      |
+| `confidence_gap`      | How much the model prefers the alternative over the given label.    |
+| `is_issue`            | Final flag. True means "look at this image."                        |
+
+**What to expect.** A ranked list of suspected mislabels, each with a
+proposed correct label and a confidence score. Triage from highest
+gap to lowest.
+
+## Mislabel 3D (medical imaging)
+
+**Use it when** you're working with CT, MRI, or ultrasound data
+organized per patient or per volume.
+
+**Inputs.**
+
+- `.nii.gz` volumes.
+- NIfTI‑style PNG stacks (`label_*/case001_0042.png`).
+- Optional segmentation metadata to restrict analysis to an anatomical
+  region of interest.
+
+**Per‑slice fields:** everything Mislabel 2D returns, plus:
+
+- **Case‑level probability**, whether the whole volume is suspect.
+- **Neighbor review**, whether slices directly above and below
+  disagree.
+- **Multi‑label probability**, probability across the full label set
+  for multi‑label cases.
+
+**What to expect.** Flags are grouped by case. Singleton flags (only
+one suspect slice in an otherwise consistent case) are automatically
+suppressed unless the neighborhood agrees.
+
+## Mislabel Broad (OOD + mislabel)
+
+A **superset of Mislabel 2D**. Besides wrong labels, it finds
+**out‑of‑distribution images**, things that don't belong in the
+dataset at all (logos, screenshots, unrelated photos, corrupted
+files).
+
+**Use it when** the dataset is from mixed sources, scraped from the
+web, or otherwise possibly contaminated.
+
+**Issue types.** Every flag is tagged with exactly one:
+
+- `mislabel`, definitely the wrong class.
+- `ood`, does not belong in the dataset.
+- `low_quality`, the model is uncertain but no clear alternative.
+
+**Result categories in the UI:**
+
+- **Mislabeled**, high confidence wrong label.
+- **MislabeledCandidate**, probable but less certain.
+- **MislabeledCandidateWeak**, weak signal.
+- **Outlier**, OOD, not a mislabel.
+
+**What to expect.** A cleaner picture than Mislabel 2D alone, since
+it separates "wrong class" from "should not be in the dataset" before
+you triage.
+
+## Poisoning
+
+**Use it when** you're ingesting data from untrusted sources
+(scraped web, user uploads, third‑party dumps) before training a
+production model.
+
+**Catches.** Backdoor triggers, adversarial patches, Glaze and
+Nightshade style‑transfer attacks, and any image tampered with to
+manipulate training.
+
+**Per‑image fields:**
+
+| Field                | Meaning                                                       |
+| -------------------- | ------------------------------------------------------------- |
+| `is_poisoned`        | Binary flag.                                                  |
+| `fused_score`        | Overall suspicion score (0–1).                                |
+| `decision_basis`     | Which detector fired (heuristic / VLM / trigger / depoison).  |
+| `trigger_bbox`       | Bounding box of the suspected trigger patch (if any).         |
+| `vlm_prompt_score`   | Vision‑language model confidence that the image is risky.     |
+| `depoison_score`     | How much model behavior changes under counter‑perturbations.  |
+
+**Tunable sensitivity:**
+
+| Knob              | Meaning                                                       |
+| ----------------- | ------------------------------------------------------------- |
+| `sensitivity`     | 0 = strict, 1 = aggressive.                                   |
+| `consensus_level` | How many independent signals must agree.                      |
+| `aggressive`      | Quick preset for maximum recall.                              |
+
+**What to expect.** Suspect images come with a visual explanation:
+highlighted trigger regions, feature heatmaps, and a plain‑language
+summary of which signals fired.
+
+<Tip>
+  Start with the `aggressive` preset on a small sample. Once you've
+  verified the false positives are manageable, switch to `consensus_level=2`
+  for a production scan.
+</Tip>
+
+## Text Analysis
+
+**Use it when** you're building fine‑tuning, RAG, or instruction
+datasets and need to sanitize them before training or publishing.
+
+**Catches three problem classes in one pass:**
+
+1. **Leaked secrets and PII**, API keys, tokens, passwords, emails, IPs.
+2. **Prompt injection attempts**, system‑prompt overrides, jailbreaks.
+3. **Topic outliers**, paragraphs that don't belong with the rest.
+
+**Per‑finding fields:**
+
+| Field                          | Meaning                                                              |
+| ------------------------------ | -------------------------------------------------------------------- |
+| `type`                         | `secret`, `injection`, or `topic_outlier`.                           |
+| `subtype`                      | `github_pat`, `aws_access_key`, `explicit`, `corpus_outlier`, etc.   |
+| `score`                        | Severity (0–1).                                                      |
+| `severity`                     | `CRITICAL`, `MEDIUM`, or `INFO`.                                     |
+| `snippet`                      | ≤ 200 characters around the match.                                   |
+| `start` / `end`                | Exact character offsets in the source document.                      |
+| `doc_id` / `paragraph_index`   | Where in the corpus the finding lives.                               |
+
+**Built‑in patterns.** GitHub PATs, AWS access keys, JWTs, generic
+`api_key=…` / `password=…`, emails, IPv4, IPv6, plus a high‑entropy
+token heuristic.
+
+**Built‑in injection phrases.** A curated list of 12 phrases
+(`ignore previous instructions`, `reveal the system prompt`,
+`disregard the earlier rules`, ...) plus jailbreak and role‑reassignment
+heuristics.
+
+**What to expect.** A searchable table of findings per document, with
+the match highlighted in context. Triage feedback (confirm / dismiss)
+is remembered across subsequent scans, so repeat patterns stop
+nagging you.
+
+## Bias & Shortcut
+
+**Use it when** you're about to train a model and want to know
+whether it will actually learn the task or cheat on a spurious cue.
+
+**Catches:**
+
+- Background color correlates with label.
+- Watermarks or logos leak the class.
+- Resolution, aspect ratio, or file metadata is informative.
+- A confounder column (site, scanner, date) determines the outcome.
+
+**Per‑hypothesis fields:** Each hypothesis is a concrete claim (for
+example, "images of class A are brighter than class B"):
+
+| Field             | Meaning                                                                           |
+| ----------------- | --------------------------------------------------------------------------------- |
+| `kind`            | Hypothesis type. `border`, `global_stat`, `extra_field`, `metadata`, `embedding_cluster`, `patch_cluster`, `outer_ring`, `loc_patch`, `duplicates`. |
+| `shortcut_score`  | Evidence strength (0–100).                                                        |
+| `decision`        | `confirmed` / `suspected_strong` / `suspected` / `not_confirmed`.                 |
+| `rationale`       | Why this decision was made.                                                       |
+| `explain_plain`   | Human‑friendly explanation.                                                       |
+| `recommendations` | Concrete mitigations ("crop the bottom 15% to remove the watermark").             |
+| `artifacts`       | Heatmaps, grids, plots.                                                           |
+| `suspects_path`   | CSV of the most suspect images for the hypothesis.                                |
+
+**Per‑image flags.** `is_bias` (subtle), `is_shortcut` (strong), plus
+the underlying score.
+
+**Confounder columns.** Drop an `extras.csv` alongside your images
+with columns like `site`, `scanner`, `date`, `patient_id`. The engine
+tests each one for label correlation and train/test shift.
+
+**What to expect.** A dedicated bias results page
+(`/datasets/:id/bias`) listing every hypothesis with its decision and
+visualizations. Confirmed shortcuts come with specific mitigations.
+
+## Mask Quality
+
+**Use it when** you're preparing data for semantic or instance
+segmentation.
+
+**Catches.** Missing labels, inconsistent sizing, class imbalance,
+invalid pixel values.
+
+**What to expect.** Per‑mask flags with a textual description of
+what's wrong and an overlay preview against the original image.
+
+## Picking the right engine
+
+<AccordionGroup>
+  <Accordion title="I just got a dataset and want a quick health check">
+    Run **Mislabel Broad**. It catches mislabels, OOD, and low quality
+    in one pass and gives you the cleanest first impression.
+  </Accordion>
+
+  <Accordion title="I'm about to train and worry about shortcuts">
+    Run **Bias & Shortcut** with your `extras.csv`. Read the confirmed
+    hypotheses before training; train on the cured branch if any
+    confirmed shortcut would have leaked into the model.
+  </Accordion>
+
+  <Accordion title="The dataset comes from the public web">
+    Run **Poisoning** with `aggressive=true` for the first pass to see
+    the worst offenders, then drop sensitivity and run again to
+    settle on a production threshold.
+  </Accordion>
+
+  <Accordion title="I'm building a fine‑tune corpus">
+    Run **Text Analysis** before anything else. Anything `CRITICAL`
+    should be redacted with [Healing](/data-integrity/healing) before
+    training.
+  </Accordion>
+</AccordionGroup>

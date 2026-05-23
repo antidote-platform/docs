@@ -1,0 +1,142 @@
+---
+title: "Errors, rate limits & FAQ"
+description: "Every non‑200 response code, what triggers it, how to react, plus the questions that come up most often."
+---
+
+This page is your reference when something doesn't go to 200. Use the
+[Verdicts](/runtime-security/verdicts) page for what to do with the
+verdict inside a 200 response; this page is for protocol failures.
+
+## Error codes
+
+| Status | `code`                                           | When                                                                                              | What to do                                                                                          |
+| ------ | ------------------------------------------------ | ------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `200`  |,                                                 | Success. Verdict in the body.                                                                      | Read `verdict` and act accordingly.                                                                  |
+| `400`  | `APP_ID_REQUIRED`                                | `X-Antidote-App-Id` header missing.                                                                | Provision an App and pass its UUID.                                                                  |
+| `400`  | `APP_NOT_FOUND`                                  | App UUID does not belong to the caller's workspace.                                                | Check the App ID and the workspace.                                                                  |
+| `400`  | `APP_TOKEN_REQUIRED` / `APP_TOKEN_INVALID`       | App requires a signed token and one wasn't supplied or doesn't verify.                              | Issue a fresh token via `…/apps/{id}/tokens`.                                                        |
+| `400`  | `CUSTOM_PARAM_REQUIRED`                          | A required custom param is missing on a scan call.                                                  | Include it in `custom_params`.                                                                       |
+| `400`  |,                                                 | Malformed request, or streaming requested on a non‑streamed route.                                  | Fix the body. See `detail`.                                                                          |
+| `401`  |,                                                 | Missing or invalid credentials.                                                                     | Check the `X-API-Key` header.                                                                        |
+| `402`  | `QUOTA_EXCEEDED`                                 | Workspace license‑call quota exceeded.                                                              | Body includes `usage` snapshot and `upgrade_url`. Wait until reset or upgrade.                       |
+| `403`  |,                                                 | Caller lacks the required permission scope.                                                         | Add `runtime_security.scan` (or `.view` / `.manage`) to the API key.                                  |
+| `404`  |,                                                 | Feature not licensed for this workspace.                                                            | Module is invisible to unlicensed tenants.                                                           |
+| `410`  | `APP_ARCHIVED`                                   | App was deleted or archived.                                                                        | Switch to a live App.                                                                                |
+| `422`  |,                                                 | Schema validation failed.                                                                           | See `detail` for the array of field errors.                                                          |
+| `423`  | `APP_DISABLED`                                   | App has `status="disabled"`.                                                                        | Re‑enable in the dashboard.                                                                          |
+| `429`  |,                                                 | Per‑second rate limit hit.                                                                          | Back off. Limits are per workspace, not per key.                                                     |
+| `429`  | `APP_QUOTA_EXCEEDED`                             | App's hourly or daily event cap reached.                                                            | Back off until `Retry-After`, or raise `max_events_per_hour` / `_per_day` on the App.                |
+| `503`  |,                                                 | Firewall disabled, starting up, or metering store unavailable.                                      | Retry with backoff. If persistent, check `/health` and contact support.                              |
+
+## Rate limits
+
+Three layers stack: per‑second limits, per‑App quotas, and license
+quota.
+
+### Per‑second rate limits
+
+| Endpoint                                              | Limit                            |
+| ----------------------------------------------------- | -------------------------------- |
+| `/scan/input`, `/scan/output`, `/scan/tool-call`      | 20 / second / workspace.          |
+| `/scan/batch`                                          | 4 / second / workspace.           |
+| `/config` PUT                                          | 6 / minute / workspace.           |
+
+When you exceed these limits you get `429` with no `code` field and
+a `Retry-After` header.
+
+### Per‑App event quotas
+
+Set `max_events_per_hour` and / or `max_events_per_day` on the App.
+When hit, the response is:
+
+- `HTTP 429`
+- `code: "APP_QUOTA_EXCEEDED"`
+- `Retry-After: 60` (hourly) or `3600` (daily)
+
+Useful for capping spend on staging Apps and for isolating noisy
+customers under the same workspace.
+
+### License quota
+
+Each call consumes one unit from the workspace's monthly call quota.
+Batch items count individually. The 402 response body:
+
+```json
+{
+  "code": "QUOTA_EXCEEDED",
+  "message": "Runtime Security call quota exceeded for this license.",
+  "usage": {"used": 1000000, "limit": 1000000, "period_end": "2026-05-01T00:00:00Z"},
+  "upgrade_url": "/settings/license"
+}
+```
+
+## Fail‑closed behaviour
+
+If the firewall service is down, scan endpoints fail with `503`. Your
+application should treat this as deny‑by‑default. Letting prompts
+through unscored is exactly what the firewall is meant to prevent.
+
+The `/health` endpoint reports liveness; integrate it into your
+readiness probe if you operate the firewall in self‑hosted mode.
+
+## FAQ
+
+<AccordionGroup>
+  <Accordion title="Why does `block` return 200 instead of 4xx?">
+    The verdict is information your application needs:
+    `blocked_reason`, `uuid`, the score, the matching phrase.
+    Returning 200 with the verdict in the body keeps that contract
+    clean. Non‑200 codes are reserved for protocol failures (auth,
+    rate limit, quota) where the client genuinely cannot retrieve a
+    verdict.
+  </Accordion>
+
+  <Accordion title="What's the difference between `redacted_text` and the original?">
+    `redacted_text` has any detected PII replaced with `<CATEGORY>`
+    markers. On `verdict: allow`, `redacted_text` equals the
+    original. On `redact`, forward `redacted_text` to your model.
+    On `block`, neither field should be sent; surface a refusal to
+    your user.
+  </Accordion>
+
+  <Accordion title="Can I turn off PII detection?">
+    Not directly, but you can set the redact threshold very high
+    (e.g. 1.1) so the API surface stays consistent without ever
+    producing a `redact` verdict from injection score. Custom PII
+    rules can be removed individually via the custom‑rules endpoint.
+  </Accordion>
+
+  <Accordion title="How do I tell if my prompt was de‑fanged before scanning?">
+    Check `injection.meta.normalized` in the response. When the
+    firewall canonicalised the input (NFKC, zero‑width strip,
+    Cyrillic confusables undo, leet undo), this flag is `true` and
+    `injection.meta.phrase_hits` shows what matched.
+  </Accordion>
+
+  <Accordion title="Where do I see what was blocked?">
+    The dashboard's **Runtime Security** tab shows verdict
+    timelines, the event log, and the drift surface. Or hit
+    `/analytics` and `/events` programmatically. See
+    [Observability](/runtime-security/observability).
+  </Accordion>
+
+  <Accordion title="Do I need a separate App per environment?">
+    Recommended. Cloning a production App into a `staging_…` clone
+    gives you separate quotas, separate event streams, and
+    config‑version history that doesn't pollute production drift
+    charts. Use `POST …/apps/{id}/clone` to seed it.
+  </Accordion>
+
+  <Accordion title="Can one App serve multiple workspaces?">
+    No. Apps are workspace‑scoped, that's the boundary both the API
+    key and the App‑Id header check. Cross‑workspace traffic is
+    rejected as `APP_NOT_FOUND` regardless of credentials.
+  </Accordion>
+
+  <Accordion title="What if I want to migrate from the Scan API to the proxy?">
+    Run both for a few days. Point a fraction of traffic at the
+    proxy via a feature flag and watch the verdict mix on the
+    dashboard for both paths. Once the proxy mix matches what the
+    scan API produced, flip the rest.
+  </Accordion>
+</AccordionGroup>

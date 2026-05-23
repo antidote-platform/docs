@@ -1,29 +1,34 @@
 ---
 title: "Blindsight Antidote"
-description: "Data integrity for ML datasets and a runtime firewall for LLM traffic, delivered as a managed cloud service."
+description: "Three coordinated surfaces for AI safety: dataset integrity, an LLM‑traffic firewall, and endpoint DLP. One managed cloud workspace."
 ---
 
 ## What Antidote does
 
-Antidote is a two-part safety platform for AI systems, delivered as a
-managed cloud service. Use whichever side (or both) fits your stack.
+Antidote is a three‑part safety platform for AI systems, delivered as
+a managed cloud service. Use whichever surfaces (or all of them) fit
+your stack.
 
-<Columns cols={2}>
-  <Card title="Data Integrity" icon="shield-check" href="/data-integrity/user-guide">
-    Scan training datasets for label errors, outliers, poisoning, bias,
-    leaked secrets, and prompt-injection payloads. Triage, heal, and
-    audit the results from a single workspace.
+<Columns cols={3}>
+  <Card title="Data Integrity" icon="shield-check" href="/data-integrity/overview">
+    Scan training datasets for label errors, outliers, poisoning,
+    bias, leaked secrets, and prompt‑injection payloads. Triage,
+    heal, and audit the results.
   </Card>
-  <Card title="Runtime Security" icon="bolt-lightning" href="/runtime-security/guide">
-    A drop-in firewall for LLM traffic. Scan prompts before they reach
-    the model and responses before they reach the user. Catches prompt
-    injection, PII / secret leakage, and dangerous tool calls.
+  <Card title="Runtime Security" icon="bolt-lightning" href="/runtime-security/overview">
+    A drop‑in firewall for LLM traffic. Scan prompts before they
+    reach the model and responses before they reach the user.
+  </Card>
+  <Card title="DLP (endpoint)" icon="laptop" href="/dlp/overview">
+    A signed desktop agent that intercepts LLM traffic at the OS
+    network layer on every managed laptop. No application code
+    changes.
   </Card>
 </Columns>
 
-The two surfaces share the same scanners, the same event store, the
-same admin console, and the same workspace. They ship independently so
-you can adopt one without committing to the other.
+All three surfaces share the same scanners, the same Apps, the same
+event store, and the same admin console. They ship independently so
+you can adopt one (or two) without committing to the rest.
 
 ## Pick a starting point
 
@@ -32,37 +37,29 @@ you can adopt one without committing to the other.
     Sign in, scan your first dataset, and make your first
     Runtime Security call in about ten minutes.
   </Card>
-  <Card title="User guide" icon="book-open" href="/data-integrity/user-guide">
-    Every feature of the Data Integrity surface from the user's point
-    of view: projects, scans, healing, compliance, audit, settings.
+  <Card title="Data Integrity overview" icon="book-open" href="/data-integrity/overview">
+    Core concepts, severity scale, and the map of every feature.
   </Card>
-  <Card title="Runtime Security guide" icon="code" href="/runtime-security/guide">
-    Endpoints, verdicts, thresholds, and copy-paste examples in
-    Python, Node, and curl.
+  <Card title="Runtime Security overview" icon="code" href="/runtime-security/overview">
+    Three ways to integrate the LLM‑traffic firewall, plus
+    authentication.
   </Card>
-  <Card title="API reference" icon="terminal" href="/api-reference/introduction">
-    OpenAPI-generated reference for the Antidote API and the
-    Runtime Security API. Try requests inline.
+  <Card title="DLP overview" icon="laptop" href="/dlp/overview">
+    Endpoint coverage for shadow‑IT AI traffic across the whole
+    workforce.
   </Card>
 </Columns>
 
 ## How the surfaces relate
 
-|                      | Data Integrity                                          | Runtime Security                                             |
-| -------------------- | ------------------------------------------------------- | ------------------------------------------------------------ |
-| **What it inspects** | Datasets at rest (images, text, NIfTI, detection)       | Live LLM prompts and responses                               |
-| **When it runs**     | On upload, on schedule, on demand                       | On every request, inline                                     |
-| **Integration**      | Web UI, REST API, scheduled scans                       | Reverse proxy (swap `base_url`) or REST scan endpoints       |
-| **Latency budget**   | Minutes. Scans are batch jobs on shared workers.        | Milliseconds. Sits in the chat hot path.                     |
-| **Output**           | Issue lists, healed datasets, compliance reports        | `allow` / `redact` / `block` verdicts, events, drift charts  |
+|                      | Data Integrity                                          | Runtime Security                                             | DLP (endpoint)                                                  |
+| -------------------- | ------------------------------------------------------- | ------------------------------------------------------------ | --------------------------------------------------------------- |
+| **What it inspects** | Datasets at rest (images, text, NIfTI, detection)       | Live LLM prompts and responses from instrumented apps         | Live LLM prompts and responses from any app on a managed device  |
+| **When it runs**     | On upload, on schedule, on demand                       | On every request, inline                                     | On every request, on the device                                  |
+| **Who deploys it**   | The data / ML team                                       | The application team                                         | IT, via MDM                                                      |
+| **Integration**      | Web UI, REST API, scheduled scans                       | Reverse proxy (swap `base_url`) or REST scan endpoints       | Push the signed agent through Jamf, Kandji, Intune, GPO, SCCM    |
+| **Output**           | Issue lists, healed datasets, compliance reports        | `allow` / `redact` / `block` verdicts, events, drift charts  | Same verdicts, attributed to a device and a directory user        |
 
-If you only need one side today, start there. Wiring up the other
-later is additive: the workspace, API keys, and observability
-surfaces already know about both.
-
-## Architecture at a glance
-
-<Card title="How it fits together" icon="diagram-project" href="/data-integrity/architecture">
-  The API, scanning workers, healer, and queues that power both
-  surfaces. Useful before diving into the API reference.
-</Card>
+If you only need one surface today, start there. Wiring up the rest
+later is additive: workspaces, Apps, API keys, observability, and
+audit already know about all three.

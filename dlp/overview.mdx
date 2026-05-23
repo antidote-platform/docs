@@ -1,0 +1,107 @@
+---
+title: "Overview"
+description: "Endpoint DLP for AI traffic. A signed desktop agent intercepts LLM calls at the OS network layer and routes them through Antidote so nothing reaches a public model unscanned."
+---
+
+Antidote DLP is the **endpoint** half of the runtime story. A signed
+desktop agent runs on every employee laptop (macOS + Windows),
+intercepts outbound LLM traffic at the OS network layer, and routes
+every prompt through Antidote for verdict and policy enforcement
+before the bytes leave the device.
+
+It's the right answer when you cannot rely on every internal team to
+wire SDK-level Runtime Security on their own. Once the agent is
+pushed by your MDM, every prompt to every public model on every
+managed device is covered, automatically, without changing a line of
+application code.
+
+## DLP vs Runtime Security
+
+The two surfaces share the same scanners, the same Apps, the same
+event store. They differ in **where the traffic is intercepted**.
+
+| Dimension                  | Runtime Security (SDK)                                              | DLP (endpoint)                                                             |
+| -------------------------- | ------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| **Where it intercepts**     | In your application code (proxy `base_url`, scan API, tool calls).  | At the OS network stack on every managed laptop.                            |
+| **Who deploys it**          | The application team that owns the LLM call.                         | IT, once, via MDM (Jamf, Kandji, Intune, GPO, SCCM).                       |
+| **What it covers**          | Your own apps that you instrumented.                                 | Every browser tab, every IDE plugin, every third-party desktop app.        |
+| **Identity**                | API key + App ID per traffic source.                                 | SSO-bound device + directory user, per machine.                            |
+| **Code changes**            | Yes (one config value for proxy, two HTTP calls for scan API).       | None.                                                                       |
+| **Best for**                | Apps you own and want fine-grained policies on.                      | Shadow-IT AI traffic from tools you don't control.                          |
+
+You usually want **both**. Runtime Security gives the application
+team tight control over its own LLM surface; DLP catches everything
+else.
+
+## Why endpoint, not just network
+
+A network-perimeter DLP (a SWG or CASB) can route HTTPS through an
+inspection point, but it cannot:
+
+- **See identity per session.** Every prompt from your fleet looks
+  like the same egress IP. With the agent, every prompt is bound to
+  the directory user whose laptop sent it.
+- **Survive on Wi-Fi off-corporate-network.** Endpoint coverage
+  follows the user, the home office, the coffee shop, the airport.
+- **Scan inside applications that pin TLS.** The agent installs your
+  organisation's root CA on the device, so it can MITM TLS without
+  client co-operation.
+
+The endpoint also gives you a tamper-evident posture: the agent
+reports its own integrity events to the cloud (`/agent/tamper-events`).
+
+## How it fits together
+
+1. **IT pushes the agent** via MDM. One enrollment token covers the
+   whole fleet.
+2. **The agent self-enrolls** on first boot and runs the SSO
+   device-code flow to bind the device to a directory user.
+3. **The OS network layer routes** every outbound LLM call (OpenAI,
+   Anthropic, Gemini, Vertex, Bedrock, and the OpenAI-compatible
+   ecosystem) through the agent's local proxy.
+4. **The agent fetches centrally-managed policy** from
+   `/agent/policy`, runs local TLS MITM with the org root CA, and
+   POSTs each prompt to `/agent/scan` for a verdict.
+5. **Allow / redact / block** is enforced on the device, exactly the
+   same verdict logic as the SDK paths.
+
+The backend integration uses dedicated `agent/*` endpoints that share
+the same scanners, the same App config, and the same event log as
+in-app Runtime Security. Dashboards show DLP traffic alongside SDK
+traffic, attributed to the device's directory user.
+
+## What it covers, what it doesn't
+
+DLP catches LLM traffic from any managed device, including:
+
+- Browser tabs (ChatGPT, Claude, Gemini, Perplexity, ...).
+- IDE plugins (Copilot Chat, Cursor, Continue, ...).
+- Native desktop apps (Claude Desktop, ChatGPT desktop, ...).
+- CLI tools that hit a public LLM API.
+
+It does not cover:
+
+- Unmanaged devices (personal phones, contractor laptops without the
+  agent). Use SSO + conditional access for those surfaces.
+- LLM traffic that never leaves your network (a private model on your
+  own VPC). Use the SDK reverse proxy in those services.
+
+## Where to next
+
+<CardGroup cols={2}>
+  <Card title="Fleet rollout" icon="rocket" href="/dlp/fleet-rollout">
+    MDM push for macOS and Windows. One enrollment token, the agent
+    self-enrolls on every device.
+  </Card>
+  <Card title="Identity binding" icon="user-shield" href="/dlp/identity">
+    SCIM directory sync, OIDC SSO, and the device-code flow that
+    binds each laptop to a directory user.
+  </Card>
+  <Card title="Devices & enrollment" icon="laptop" href="/dlp/devices">
+    The fleet view: device status, identity binding, tamper events.
+  </Card>
+  <Card title="Policies & agent API" icon="shield-halved" href="/dlp/policies">
+    Centrally-managed AI host rules and the backend endpoints the
+    agent calls.
+  </Card>
+</CardGroup>

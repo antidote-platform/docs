@@ -1,0 +1,141 @@
+---
+title: "Healing"
+description: "Turn a scan's findings into a cured copy of the dataset. Drop outliers, relabel mislabels, redact secrets, and keep a full lineage trail."
+---
+
+Healing takes a scan's findings and produces a **cured copy of the
+dataset** with the bad samples either fixed or removed. You choose
+which fixes to apply; every action is captured in the audit trail.
+
+## When to heal
+
+- After a `mislabel` or `mislabel_broad` scan, to relabel suspects and
+  drop OOD samples.
+- After a `poisoning` scan, to drop tampered samples before training.
+- After a `text_analysis` scan, to redact secrets and remove
+  injection paragraphs from a fine‑tune corpus.
+- After a `bias_shortcut` scan, to apply the recommended mitigations
+  (cropping, dropping, rebalancing).
+
+## What the toggles do
+
+| Toggle                    | Effect                                                                       |
+| ------------------------- | ---------------------------------------------------------------------------- |
+| **Fix mislabeled**        | Rewrite labels according to the engine's predictions.                        |
+| **Remove outliers**       | Drop OOD or outlier samples entirely.                                        |
+| **Remove poisoned**       | Drop samples flagged by the poisoning engine.                                |
+| **Remove low quality**    | Drop borderline low‑confidence cases.                                        |
+| **Confidence floor**      | Only act on findings above the chosen confidence threshold.                  |
+
+Toggles are independent. You can drop poisoned samples without
+touching mislabels, or relabel mislabels without dropping anything.
+
+## How to heal
+
+<Steps>
+  <Step title="Open the source">
+    Start from either the dataset detail page (**Heal**) or the scan
+    detail page (**Heal from this scan**). Healing from a scan
+    pre‑fills the dialog with that scan's findings.
+  </Step>
+
+  <Step title="Pick what to apply">
+    Flip the toggles you want. Set a **confidence floor** if you only
+    want to act on the highest‑confidence findings.
+  </Step>
+
+  <Step title="Pick the output">
+    Healing always writes a result. You can choose:
+
+    - **New child dataset**, the original stays untouched. A lineage
+      edge `healed_from` links the child to the source.
+    - **New branch on the source**, the cured contents live as a
+      branch you can switch between.
+
+    A zip download is always offered alongside.
+  </Step>
+
+  <Step title="(Optional) Auto‑rescan">
+    Toggle **Auto‑rescan after healing** to immediately run the same
+    engine on the cured output. Useful for verifying the heal moved
+    the dataset out of `CRITICAL`.
+  </Step>
+
+  <Step title="Submit and watch">
+    Healing runs as a background job with its own progress stream.
+    The result appears in the dataset's lineage graph.
+  </Step>
+</Steps>
+
+<Tip>
+  When healing for the first time on a noisy dataset, set the
+  confidence floor high (e.g. 0.9) and inspect the cured branch
+  before relabeling everything. Lower the floor incrementally once
+  you trust the engine's calls.
+</Tip>
+
+## Healing for text
+
+Text healing is different from image healing because the unit of repair
+is the snippet, not the file.
+
+| Action               | What it does                                                                                                  |
+| -------------------- | ------------------------------------------------------------------------------------------------------------- |
+| **Redact secrets**   | Replace every detected secret span with `[REDACTED_<type>]` in place. The original document remains otherwise. |
+| **Strip injections** | Remove paragraphs flagged as injection attempts.                                                              |
+| **Drop topic outliers** | Remove paragraphs flagged as off‑topic.                                                                    |
+
+Redacted documents keep their original `doc_id` and offsets so the
+audit trail can reconstruct what was changed.
+
+## What you get back
+
+Every healing run produces:
+
+- A **new dataset or branch** with the cured contents.
+- A **zip download** of the result.
+- An **action record** in the audit trail (who triggered it, what
+  toggles were set, which scan it descended from).
+- A **lineage edge** linking the cured output back to the source
+  dataset.
+- *(Optional)* a follow‑up scan if you enabled auto‑rescan.
+
+## Common workflows
+
+<AccordionGroup>
+  <Accordion title="Clean up a public dataset before training">
+    1. Run `mislabel_broad` and `poisoning`.
+    2. Heal with **Remove outliers**, **Remove poisoned**, and
+       **Fix mislabeled** at confidence floor 0.85.
+    3. Enable **Auto‑rescan** and confirm the result is `HEALTHY` or
+       `UNHEALTHY−`.
+    4. Train on the cured branch.
+  </Accordion>
+
+  <Accordion title="Sanitize a fine‑tune corpus">
+    1. Run `text_analysis`.
+    2. Heal with **Redact secrets** and **Strip injections**.
+    3. Re‑run `text_analysis` to confirm zero `CRITICAL` findings
+       remain.
+    4. Export the cured corpus.
+  </Accordion>
+
+  <Accordion title="Iterate on a noisy labelling effort">
+    1. Run `mislabel`.
+    2. Heal **only the top 10%** of suspects (high confidence floor)
+       into a new branch.
+    3. Have a reviewer compare the original and cured branches side
+       by side.
+    4. Lower the confidence floor for the next pass once the
+       reviewer signs off.
+  </Accordion>
+</AccordionGroup>
+
+## What healing does **not** do
+
+- It does not modify the original dataset unless you explicitly pick
+  "main branch" as the output target.
+- It does not run a fresh scan automatically (you have to opt in via
+  **Auto‑rescan**).
+- It does not delete the source scan, so you can re‑heal with
+  different toggles at any time.

@@ -1,6 +1,6 @@
 ---
-title: 'Reverse-Proxy'
-description: 'Wire-compatible passthrough endpoints for OpenAI, Anthropic, Gemini, Vertex, Bedrock, and Ollama, drop Antidote in front of LLM traffic by swapping one config value.'
+title: "Reverse proxy"
+description: "Wire-compatible passthrough endpoints for OpenAI, Anthropic, Gemini, Vertex, Bedrock, and self-hosted runtimes. Swap one config value to put Antidote in front of LLM traffic."
 ---
 
 # Runtime Security Reverse-Proxy
@@ -488,9 +488,7 @@ not yet implemented, see §3 caveat.
 
 Scanning multiple fields produces multiple `RuntimeScanResult` objects;
 the route folds them to the **worst verdict seen** (`allow < redact < block`)
-so a single request writes one input event with the strongest verdict
-and the aggregated latency. `_fold()` in
-`runtime_security/proxy.py` implements this.
+so a single request writes one input event with the strongest verdict.
 
 ---
 
@@ -613,7 +611,7 @@ App's current config version when the request is resolved against an
 App-Id (see §4). Editing an App's config publishes a new version that
 takes effect on the next request, no proxy restart needed.
 
-See §9 of the client guide (`runtime-security-guide.md`) for the full
+See [Configuration](/runtime-security/configuration) for the full
 schema split.
 
 ---
@@ -663,7 +661,7 @@ input) one output event through the existing
 - `model`: the model name from the request body (input phase) or the
   upstream response (output phase).
 - `injection_score` / `injection_label`, `pii_count`, `pii_categories`,
-  `text_length`, `latency_ms`, `blocked_reason` as usual.
+  `text_length`, `blocked_reason` as usual.
 - `metadata_`: `{phase, location}`, `location` points at the blocked
   field (e.g. `"messages[2].user"`, `"choices[0].message"`,
   `"system"`) to speed up root-cause analysis.
@@ -766,10 +764,10 @@ The only endpoints it serves are:
    can crash or OOM the main API without ever touching the firewall.
    If the proxy is what your production LLM traffic depends on, it
    shouldn't share a process with batch scan workers.
-2. **Right-sized scaling.** The proxy is latency-sensitive and runs on
-   the critical path of every LLM call. The main API is not. You want
-   to scale them on different signals (QPS/latency for the proxy;
-   dataset-count and worker-queue depth for the main API).
+2. **Right-sized scaling.** The proxy runs on the critical path of
+   every LLM call. The main API does not. You want to scale them on
+   different signals (QPS for the proxy; dataset-count and
+   worker-queue depth for the main API).
 3. **Smaller attack surface.** The firewall image has no upload
    endpoints, no admin surface, no healing routes, nothing to
    exploit beyond the two wire-protocol shapes. Pen-testing the
@@ -865,8 +863,8 @@ HuggingFace Hub download. For **air-gapped** builds set
   liveness probes.
 - `GET /readyz`, calls `warmup()` on the injection model and returns
   `ready` if the classifier loaded or `degraded` if the container is
-  running on heuristics only. Use this for readiness probes so the
-  first request doesn't pay the cold-start tax.
+  running on heuristics only. Use this for readiness probes so traffic
+  doesn't arrive before the classifier is loaded.
 - Kubernetes / ECS task definitions should set
   `readinessProbe.httpGet.path = /readyz` and
   `livenessProbe.httpGet.path = /healthz`.
@@ -877,12 +875,10 @@ HuggingFace Hub download. For **air-gapped** builds set
   inference. Two workers per container is a reasonable starting point;
   scale horizontally before scaling `--workers` past ~4 because the HF
   pipeline holds its own thread-pool internally.
-- Model load is the slow step. Keep the container warm, aggressive
-  scale-to-zero will trade every cold start for ~5-15s on a fresh CPU
-  pod depending on the model.
+- Model load is the slow step. Keep the container warm; aggressive
+  scale‑to‑zero forces a fresh model load on every wake.
 - Pin CPU limits high enough that DeBERTa inference doesn't starve on
-  a shared host. Typical cost: ~10-50 ms per prompt at 512 tokens on
-  modern x86-64.
+  a shared host.
 
 ---
 
@@ -904,7 +900,6 @@ HuggingFace Hub download. For **air-gapped** builds set
   `RUNTIME_SECURITY_*_BASE_URL` env vars at your internal gateway and
   register self-hosted bases via
   `RUNTIME_SECURITY_OPENAI_COMPAT_EXTRA_BASES`.
-- **Timeouts.** Default `RUNTIME_SECURITY_PROXY_TIMEOUT=60` seconds is
-  chosen to match typical chat-completion latency on large models.
+- **Timeouts.** Default `RUNTIME_SECURITY_PROXY_TIMEOUT=60` seconds.
   Raise it for long-context requests that your upstream honors (e.g.
   Claude 200k-context calls).

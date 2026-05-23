@@ -1,0 +1,151 @@
+---
+title: "Observability"
+description: "Analytics, event log, drift detection, and streaming. Three read‑only endpoints that turn the firewall into a continuous monitoring surface."
+---
+
+The persisted event log powers three read‑only endpoints plus a
+streaming surface. Use them to answer "what is the firewall doing
+right now" without rerunning anything.
+
+## Analytics
+
+### `GET /api/runtime-security/analytics?days=14`
+
+Returns aggregate counts for the window.
+
+```json
+{
+  "range_days": 14,
+  "totals": {
+    "total": 12450,
+    "input": 8200,
+    "output": 4100,
+    "tool_call": 150,
+    "pii_hits": 412,
+    "injection_hits": 78
+  },
+  "verdict_breakdown": {"allow": 11960, "redact": 412, "block": 78},
+  "pii_category_breakdown": {"email": 220, "phone": 110, "ssn": 12},
+  "top_injection_labels": [{"label": "INJECTION", "count": 78}],
+  "series": [
+    {"date": "2026-04-15", "allow": 800, "redact": 30, "block": 5, "total": 835}
+  ],
+  "model_name": "protectai/deberta-v3-small-prompt-injection-v2"
+}
+```
+
+Use `minutes=N` instead of `days=N` for sub‑day windows
+(`1 ≤ N ≤ 5256000`).
+
+### How to read the numbers
+
+| Field                       | What it tells you                                                                 |
+| --------------------------- | --------------------------------------------------------------------------------- |
+| `verdict_breakdown`         | The shape of your traffic. If `block` spikes, investigate before tuning.           |
+| `pii_category_breakdown`    | Which categories are actually firing. Drives custom rule decisions.                |
+| `top_injection_labels`      | The labels the model is producing. Useful for spotting an emerging attack family.  |
+| `series`                    | Daily series. Plot it to see weekend / weekday rhythms or rollout impact.          |
+
+## Event log
+
+### `GET /api/runtime-security/events`
+
+Paginated event list.
+
+| Parameter      | Type     | Notes                                                              |
+| -------------- | -------- | ------------------------------------------------------------------ |
+| `limit`        | int      | 1–500. Default 50.                                                  |
+| `before_uuid`  | string   | Cursor for pagination. Pass the last UUID you saw.                 |
+| `verdict`      | string   | Filter to `allow`, `redact`, or `block`.                            |
+| `direction`    | string   | Filter to `input`, `output`, or `tool_call`.                        |
+
+The response includes the full event payload: `uuid`, `verdict`,
+`text`, `redacted_text`, scoring breakdown, App id, config version,
+and any `custom_params` attached at scan time.
+
+## Drift
+
+### `GET /api/runtime-security/drift?baseline_days=30&recent_days=7`
+
+Population Stability Index (PSI) per dimension:
+
+- `verdict`
+- `direction`
+- `source_app`
+- `model`
+- `provider`
+- `pii_category`
+- `injection_label`
+- `blocked_reason`
+
+PSI ranges roughly:
+
+| PSI value     | Reading                                                            |
+| ------------- | ------------------------------------------------------------------ |
+| `< 0.1`       | Stable. No action.                                                  |
+| `0.1 – 0.25`  | Mild drift. Worth a glance.                                         |
+| `> 0.25`      | Significant drift. Investigate.                                     |
+
+PSI > 0.25 on `injection_label` is the canonical "model is missing a
+new attack pattern" signal, investigate and consider updating the
+phrase pack or threshold.
+
+## Streaming
+
+Rolling‑window streaming with mid‑stream cancellation is **supported**
+on the following proxy routes:
+
+- OpenAI (`stream=true`)
+- Anthropic (`stream=true`)
+- Every OpenAI‑compatible provider (Groq, DeepSeek, Perplexity,
+  Mistral, OpenRouter, Cerebras, self‑hosted)
+- Google Gemini (`:streamGenerateContent`)
+- Vertex AI (`:streamGenerateContent`)
+
+Upstream chunks forward to your client immediately; the firewall
+scans the assembled response on a rolling cadence and emits a
+provider‑shaped terminal chunk on `block`.
+
+### Not yet streamed
+
+- AWS Bedrock `/converse-stream`, uses the AWS event‑stream binary
+  framing that needs a custom parser. Use the non‑streaming
+  `/converse` route for now.
+- Legacy OpenAI `/v1/completions`, rejected with `400`.
+
+If your use case is compliance‑strict (no mid‑stream leakage
+allowed), use a non‑streaming route and buffer‑then‑stream from your
+own code.
+
+## Where the dashboard surfaces this
+
+| Page                              | What it shows                                                                                |
+| --------------------------------- | -------------------------------------------------------------------------------------------- |
+| **Runtime Security → Overview**    | Verdict timeline and per‑App split.                                                           |
+| **Runtime Security → Events**     | Paginated event log with filter panel.                                                       |
+| **Runtime Security → Drift**      | PSI heatmap with click‑through to the event log filtered by the suspicious dimension.        |
+| **Runtime Security → Apps**       | Per‑App verdict mix and quota usage.                                                          |
+
+## Common workflows
+
+<AccordionGroup>
+  <Accordion title="Quarterly review">
+    Pull `analytics?days=90` for each App. Plot verdict mix and PII
+    categories alongside your model release timeline to see what
+    changed.
+  </Accordion>
+
+  <Accordion title="Tune a noisy App">
+    1. `drift?baseline_days=30&recent_days=3` to see what's shifted.
+    2. If `injection_label` drifted, inspect the
+       `top_injection_labels` analytics field for the new label.
+    3. Add a custom phrase or adjust the threshold, then watch the
+       next drift run.
+  </Accordion>
+
+  <Accordion title="Ship live data to your SIEM">
+    Poll `/events` with `before_uuid` cursoring from a scheduled job.
+    Push to your SIEM with the `uuid` so cross‑system queries can
+    join on it.
+  </Accordion>
+</AccordionGroup>

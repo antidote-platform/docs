@@ -1,0 +1,127 @@
+---
+title: "Data Playground"
+description: "Interactively explore, edit, slice, and re‑label samples before committing to a full scan."
+---
+
+The Data Playground is an interactive exploration workspace. It loads a
+dataset (or subset) into an in‑memory **session** where you can poke
+at the data, run lightweight previews, and publish the result back as
+a new dataset or branch.
+
+It's behind the `playground.access` permission, see
+[Team & Access](/data-integrity/team).
+
+## When to use it
+
+- You just imported a dataset and want a feel for it before kicking
+  off heavy scans.
+- You need to **edit labels by hand** on a small subset to seed a
+  cleaner training run.
+- You want to **propose a stratified split** and visualize the class
+  balance before saving it.
+- You want a **quick bias peek** without paying for the full
+  `bias_shortcut` engine.
+
+## Sessions
+
+A session is one user's working copy of a dataset, isolated from
+everyone else. Sessions live on the Playground home page
+(`/playground`).
+
+| State            | What it means                                                  |
+| ---------------- | -------------------------------------------------------------- |
+| `preparing`      | Antidote is materialising the working copy. Progress streams.  |
+| `ready`          | The Playground editor is open and editable.                    |
+| `cancelled`      | You cancelled preparation; the session is gone.                |
+| `failed`         | Preparation errored. Retry from the home page.                 |
+| `idle`           | No edits for a while; eligible for auto‑cleanup.               |
+
+Each session has its own isolated workspace so multiple teammates can
+explore the same dataset in parallel without stepping on each other.
+
+## Creating a session
+
+<Steps>
+  <Step title="Pick a source">
+    From `/playground` click **New session**. Pick one of:
+
+    - An existing dataset (whole, or filtered).
+    - A new upload (zip / folder).
+    - A pull from HuggingFace, Kaggle, or S3.
+  </Step>
+
+  <Step title="Wait for preparation">
+    The session shows a streamed progress bar. You can cancel from
+    the session card.
+  </Step>
+
+  <Step title="Open the editor">
+    Once ready, the Playground opens with the data table, filters,
+    and the analysis panels.
+  </Step>
+</Steps>
+
+## What the editor gives you
+
+| Pane                | What you can do                                                                                  |
+| ------------------- | ------------------------------------------------------------------------------------------------ |
+| **Data table**      | Paginate, sort, filter, inline‑edit cells. Multi‑select supports bulk label flips.               |
+| **Filters**         | By class, split, file size, metadata field.                                                      |
+| **Embedding view**  | Run an embedding pass and view a 2D projection. Lasso‑select points to filter the table.         |
+| **Bias preview**    | Lightweight version of the bias engine. Directional, not authoritative.                          |
+| **Distributions**   | Class balance, file size, aspect ratio, token length, missing value counts.                      |
+| **Splits**          | Propose stratified / random / group splits and visualize the result before committing.           |
+
+The bias preview and embedding view are **directional**, they're
+meant to point you at problems, not replace a full scan. Treat them
+like a sanity check.
+
+## Saving your work
+
+You have three ways to commit changes:
+
+| Action                  | What it does                                                                       |
+| ----------------------- | ---------------------------------------------------------------------------------- |
+| **Publish as dataset**  | Creates a new named dataset from the working copy.                                  |
+| **Export CSV**          | Downloads the edited manifest. You can re‑import it later.                          |
+| **Update cells**        | Commits edits back to a source dataset's branch.                                    |
+
+Published datasets get a lineage edge `playground_session` linking
+them to the session they came from, so auditors can trace any
+hand‑edited samples back to who edited them.
+
+## Common workflows
+
+<AccordionGroup>
+  <Accordion title="Quickly understand a new dataset">
+    1. Create a session against the dataset, no subsetting.
+    2. Open the embedding view; look for tight unexpected clusters.
+    3. Skim the distributions panel for class imbalance or weird
+       size outliers.
+    4. Close the session; no need to publish.
+  </Accordion>
+
+  <Accordion title="Hand‑relabel a small slice">
+    1. Filter the table to the class you want to clean.
+    2. Use multi‑select + bulk label flip on visually mislabeled
+       samples.
+    3. Publish as a new branch on the original dataset.
+    4. Train a quick model on the cured branch as an A/B test.
+  </Accordion>
+
+  <Accordion title="Propose a train / val / test split">
+    1. Open the splits panel and choose **stratified by class**.
+    2. Eyeball the proposed sizes per class.
+    3. Adjust the random seed if a class is too small in a split.
+    4. **Update cells** to commit the split column back to the
+       dataset's branch.
+  </Accordion>
+</AccordionGroup>
+
+## Sessions and cleanup
+
+- Long‑idle sessions time out and are cleaned up automatically. The
+  exact threshold is set on your tenant (typically 24h of inactivity).
+- You can **rename**, **cancel**, **retry**, or **delete** any
+  session from the Playground home page.
+- Deleting a session does not affect the dataset it was sourced from.

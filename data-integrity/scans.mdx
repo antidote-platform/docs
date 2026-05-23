@@ -1,0 +1,171 @@
+---
+title: "Running scans"
+description: "Launch one or many scans, monitor progress in real time, and triage findings from the scan and result pages."
+---
+
+A scan is one run of one engine against one dataset (or branch). It
+produces results, artifacts, and a severity. This page covers the
+launch, the lifecycle, and how to triage the output.
+
+For what each engine actually detects, see
+[Engines](/data-integrity/engines).
+
+## Launching a scan
+
+From a dataset detail page, click **New scan**.
+
+<Steps>
+  <Step title="Pick an engine">
+    The picker lists every engine compatible with the dataset type.
+    Image datasets surface `mislabel`, `mislabel_broad`, `poisoning`,
+    `bias_shortcut`, `mask_quality`, and `yolo`. Text datasets show
+    `text_analysis`. 3D / NIfTI datasets show `mislabel_3d`.
+  </Step>
+
+  <Step title="Pick a branch (optional)">
+    If the dataset has branches, the scan defaults to the main view.
+    Switch to a branch to scan just that manifest.
+  </Step>
+
+  <Step title="Tune parameters">
+    Every engine accepts the same top‑level controls:
+
+    - **Use GPU**, when a GPU worker is available.
+    - **Sample cap**, limit the number of samples for fast previews.
+    - **Advanced parameters**, engine‑specific knobs (thresholds,
+      sensitivity, noise fraction, consensus level). The defaults
+      work for most datasets.
+  </Step>
+
+  <Step title="Launch (or queue multiple)">
+    Click **Run** to start. You can queue **multiple engines** in one
+    submission; each one becomes its own scan row and runs in
+    parallel as worker capacity allows.
+  </Step>
+</Steps>
+
+<Tip>
+  Queue `mislabel`, `mislabel_broad`, and `bias_shortcut` together on
+  a fresh dataset. The combination gives you label quality, OOD
+  contamination, and shortcut risk in one pass.
+</Tip>
+
+## The scan lifecycle
+
+Scans move through four states, with live progress streamed over a
+WebSocket.
+
+```
+queued ─▶ running ─▶ finished
+                └──▶ error
+```
+
+| State       | What you see                                                                        |
+| ----------- | ----------------------------------------------------------------------------------- |
+| `queued`    | The scan is waiting for a worker on its engine's queue.                             |
+| `running`   | Progress bar with a percentage and a phase label (`loading`, `extracting features`, `voting`, `persisting`). The flagged‑item counter increments as findings stream in. |
+| `finished`  | Severity, total results, flagged count, and threshold settings are persisted.       |
+| `error`     | The traceback is preserved. Click **Retry** to re‑run with the same parameters.     |
+
+If your network blocks WebSockets, progress falls back to polling every
+few seconds. No configuration required.
+
+## Cancelling a running scan
+
+From the scan detail page, click **Cancel**. Partial results are
+discarded and the scan is marked `error` with `reason="cancelled"`.
+Audit log captures who cancelled and when.
+
+## Scan list (`/scans`)
+
+A global table of every scan across the workspace.
+
+- Filter by project, dataset, engine, status, severity, time range, or
+  user.
+- Sort by any column.
+- Bulk **re‑run**, **cancel**, **delete**.
+- Export the filtered view to CSV for offline review.
+
+## Scan detail (`/scans/:id`)
+
+The scan page is where most triage happens.
+
+| Section                | What it gives you                                                                                  |
+| ---------------------- | -------------------------------------------------------------------------------------------------- |
+| **Summary**            | Total results, flagged count, severity, thresholds used, duration, engine parameters.              |
+| **Threshold graph**    | Visualises the score distribution and where the cutoff landed. **Drag it** to tune and re‑preview the issue table without re‑running the scan. |
+| **Latent‑space view**  | UMAP / t‑SNE / PCA projection of every sample, colored by class, prediction, or issue flag. Click a point to jump to that result. |
+| **Issue table**        | Paginated, sortable, filterable. Inline preview on each row; bulk actions in the header.            |
+| **Artifacts**          | Downloadable JSON / CSV files the engine produced (`complete_analysis.json`, `potential_issues.json`, hypothesis CSVs for bias). |
+| **Top bar actions**    | **Re‑run**, **Heal from this scan**, **Export**, **Send to Jira**.                                  |
+
+<Tip>
+  The threshold graph is interactive: dragging the cutoff line
+  re‑filters the issue table immediately. Use it to find a sensitivity
+  setting you trust before triggering a healing run.
+</Tip>
+
+## Result detail (`/results/:id`)
+
+When you click a row in the issue table, you land on the per‑result
+page.
+
+- Full‑size preview of the sample.
+- Every score and per‑signal breakdown.
+- **Status** dropdown: `pending`, `confirmed`, `dismissed`, `fixed`.
+  Confirmed issues become weighted signal for future scans;
+  dismissed ones lose weight.
+- **Comments** with `@mention` to loop in a reviewer.
+- **Neighbors**, the nearest samples in embedding space for context.
+- **Similar issues**, other flagged items with the same signature.
+
+## Bulk triage
+
+From the issue table on the scan detail page:
+
+- **Select rows** with checkboxes (Shift+click for range select).
+- **Confirm / Dismiss / Mark for healing** with the bulk‑action bar.
+- **Export selection** as CSV for offline review.
+- **Send to Jira** as one issue per row, or one rolled‑up issue with
+  every row as an attachment. Snapshots travel with the issue.
+
+<AccordionGroup>
+  <Accordion title="Compare two scans">
+    Open the two scans in adjacent browser tabs, or use the
+    **Compare** button on the scan list. The compare view shows
+    threshold differences, distribution shifts, and a diff of which
+    samples were newly flagged or newly cleared. Useful when iterating
+    on parameters.
+  </Accordion>
+
+  <Accordion title="Re‑run with adjusted parameters">
+    From the scan detail page, **Re‑run** opens the new‑scan modal
+    pre‑filled with the previous parameters. Adjust what you want and
+    submit. The new scan stays linked to its predecessor in the
+    dataset's scan history.
+  </Accordion>
+
+  <Accordion title="Hand triaged results to engineering">
+    Bulk‑select the rows you want to ship, **Send to Jira** with
+    "one rolled‑up issue", and assign the resulting ticket. Engineers
+    open the ticket and click straight back to the scan in Antidote
+    for context.
+  </Accordion>
+</AccordionGroup>
+
+## See also
+
+<CardGroup cols={2}>
+  <Card title="Engines" icon="microchip" href="/data-integrity/engines">
+    What each engine detects and how to interpret its output.
+  </Card>
+  <Card title="Healing" icon="bandage" href="/data-integrity/healing">
+    Turn a scan's findings into a cured copy of the dataset.
+  </Card>
+  <Card title="Scheduled scans" icon="clock" href="/data-integrity/automation">
+    Run scans automatically on a cron.
+  </Card>
+  <Card title="Webhooks" icon="webhook" href="/data-integrity/integrations">
+    Push scan events to your downstream systems.
+  </Card>
+</CardGroup>

@@ -1,0 +1,196 @@
+---
+title: "SDK examples"
+description: "Copy‑paste integrations for Python, Node, curl, LangChain, and LlamaIndex."
+---
+
+These snippets are deliberately minimal so you can drop them into a
+real project and adjust. None of them require an Antidote SDK; the
+LLM SDKs already accept `base_url` and `default_headers`, which is
+all the firewall needs.
+
+## Python: explicit scan calls
+
+The portable pattern: scan input, call your model, scan output.
+
+```python
+import httpx
+
+ANTIDOTE = httpx.Client(
+    base_url="https://api.your-antidote.com",
+    headers={
+        "X-API-Key": "ak_live_…",
+        "X-Antidote-App-Id": "app_…",
+    },
+    timeout=10.0,
+)
+
+def safe_chat(user_text: str) -> str:
+    # Pre-flight scan
+    pre = ANTIDOTE.post(
+        "/api/runtime-security/scan/input",
+        json={"text": user_text},
+    )
+    pre.raise_for_status()
+    verdict = pre.json()
+    if verdict["verdict"] == "block":
+        raise PermissionError(f"Blocked: {verdict['blocked_reason']}")
+    safe_text = verdict["redacted_text"] if verdict["verdict"] == "redact" else user_text
+
+    # Your model
+    response = call_my_llm(safe_text)
+
+    # Post-flight scan
+    post = ANTIDOTE.post(
+        "/api/runtime-security/scan/output",
+        json={"prompt": safe_text, "response": response},
+    )
+    post.raise_for_status()
+    out = post.json()
+    if out["verdict"] == "block":
+        return f"I can't share that. (event: {out['uuid']})"
+    return out["redacted_text"] if out["verdict"] == "redact" else response
+```
+
+## Node: reverse proxy
+
+The shortest integration possible: swap one URL.
+
+```javascript
+import OpenAI from "openai";
+
+const openai = new OpenAI({
+  baseURL: "https://api.your-antidote.com/api/runtime-security/proxy/openai/v1",
+  apiKey: process.env.OPENAI_API_KEY,
+  defaultHeaders: {
+    "X-API-Key": process.env.ANTIDOTE_API_KEY,
+    "X-Antidote-App-Id": process.env.ANTIDOTE_APP_ID,
+  },
+});
+
+const completion = await openai.chat.completions.create({
+  model: "gpt-4o",
+  messages: [{ role: "user", content: "Hello" }],
+});
+```
+
+## curl: agent tool‑call gate
+
+The minimal one‑liner before a tool dispatch.
+
+```bash
+verdict=$(curl -sS -X POST https://api.your-antidote.com/api/runtime-security/scan/tool-call \
+  -H "X-API-Key: ak_live_…" \
+  -H "X-Antidote-App-Id: app_…" \
+  -H "Content-Type: application/json" \
+  -d "$(jq -n --arg name "$tool" --argjson args "$tool_args" \
+        '{tool_name:$name, arguments:$args}')" \
+  | jq -r .verdict)
+
+if [ "$verdict" = "block" ]; then
+  echo "tool blocked"; exit 1
+fi
+# ... execute the tool ...
+```
+
+## LangChain
+
+LangChain's `ChatOpenAI` is a thin wrapper over the OpenAI Python SDK
+and forwards `base_url` and `default_headers`. Point those at the
+Antidote reverse proxy and every LangChain call, chains, retrievers,
+agent LLM steps, flows through Runtime Security.
+
+```python
+from langchain_openai import ChatOpenAI
+
+llm = ChatOpenAI(
+    model="gpt-4o",
+    api_key=OPENAI_API_KEY,
+    base_url=f"{ANTIDOTE_URL}/api/runtime-security/proxy/openai/v1",
+    default_headers={
+        "X-API-Key": ANTIDOTE_API_KEY,
+        "X-Antidote-App-Id": ANTIDOTE_APP_ID,
+    },
+)
+
+reply = llm.invoke("Hello")
+```
+
+`init_chat_model("openai:gpt-4o", base_url=..., default_headers=...)`
+works the same way for projects that use the model‑string indirection.
+
+For Anthropic, swap to `ChatAnthropic` from `langchain-anthropic`,
+point `base_url` at `/api/runtime-security/proxy/anthropic`, and pass
+the Antidote key on `X-Antidote-Key` (Anthropic reserves `x-api-key`
+for the upstream provider).
+
+<Tip>
+  Want event metadata tagged with LangChain `run_id`? Add a small
+  `BaseCallbackHandler` that posts to `/scan/input` from
+  `on_llm_start` with `metadata={"langchain_run_id": str(run_id)}`.
+  The handler can't rewrite the prompt (observability‑only) but the
+  events show up in the dashboard joined to your LangChain traces.
+</Tip>
+
+## LlamaIndex
+
+LlamaIndex's `OpenAI` LLM accepts `api_base` and `default_headers`:
+
+```python
+from llama_index.llms.openai import OpenAI
+
+llm = OpenAI(
+    model="gpt-4o",
+    api_key=OPENAI_API_KEY,
+    api_base=f"{ANTIDOTE_URL}/api/runtime-security/proxy/openai/v1",
+    default_headers={
+        "X-API-Key": ANTIDOTE_API_KEY,
+        "X-Antidote-App-Id": ANTIDOTE_APP_ID,
+    },
+)
+
+reply = llm.complete("Hello")
+```
+
+To apply this globally across query engines, retrievers, and agents:
+
+```python
+from llama_index.core import Settings
+Settings.llm = llm
+```
+
+For Anthropic, `from llama_index.llms.anthropic import Anthropic`
+with `api_base="/api/runtime-security/proxy/anthropic"` and the
+Antidote key on `X-Antidote-Key`.
+
+<Tip>
+  **Agent tool calls.** The proxy sees LLM traffic but not the agent
+  runtime's *execution* of a tool. If you need `scan/tool-call`
+  coverage on `FunctionCallingAgent` or `ReActAgent` tool dispatches,
+  wrap your `FunctionTool` so its `fn` posts to
+  `/api/runtime-security/scan/tool-call` before invoking the real
+  function. Same pattern works for LangChain `AgentExecutor`'s
+  `BaseTool`.
+</Tip>
+
+## Picking a pattern
+
+<AccordionGroup>
+  <Accordion title="I just want it on, fast">
+    Reverse proxy (Python or Node). One config change, full coverage.
+  </Accordion>
+
+  <Accordion title="I have custom middleware">
+    Scan API. Two HTTP calls per request, full control over what you
+    do with each verdict.
+  </Accordion>
+
+  <Accordion title="I have an agent that runs tools">
+    Reverse proxy for the LLM, plus tool‑call scan wrapping every
+    tool dispatch. The two combine to cover the whole loop.
+  </Accordion>
+
+  <Accordion title="I scan documents that aren't going to a model">
+    Scan API `/scan/batch`. Up to 32 items per call, one license unit
+    per item, much cheaper HTTP overhead.
+  </Accordion>
+</AccordionGroup>
