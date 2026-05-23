@@ -1,4 +1,9 @@
-/* Breathing room between the page header (title + description) and the body content. */
+/* Breathing room between the page title (H1) and the description paragraph beneath it. */
+main h1:first-of-type {
+  margin-bottom: 1.25rem;
+}
+
+/* And a bit of space between the description and the first body section. */
 main h1:first-of-type + p {
   margin-bottom: 2rem;
 }
