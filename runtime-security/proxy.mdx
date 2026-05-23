@@ -1,13 +1,13 @@
 ---
 title: 'Reverse-Proxy'
-description: 'Wire-compatible passthrough endpoints for OpenAI, Anthropic, Gemini, Vertex, Bedrock, and Ollama — drop Antidote in front of LLM traffic by swapping one config value.'
+description: 'Wire-compatible passthrough endpoints for OpenAI, Anthropic, Gemini, Vertex, Bedrock, and Ollama, drop Antidote in front of LLM traffic by swapping one config value.'
 ---
 
 # Runtime Security Reverse-Proxy
 
 Wire-compatible passthrough endpoints for all supported LLM providers
 that let client applications drop Antidote Runtime Security in front of
-their LLM traffic by swapping a single configuration value — the SDK
+their LLM traffic by swapping a single configuration value, the SDK
 `base_url`. Every prompt is scanned before it reaches the upstream
 provider and every response is scanned before it returns to the caller,
 reusing the same scanner, thresholds, settings, and event store as the
@@ -15,11 +15,11 @@ existing `/scan/input` and `/scan/output` endpoints.
 
 **Supported providers:**
 
-- **Native routes** — OpenAI, Anthropic (Claude), Google Gemini, Google
+- **Native routes**, OpenAI, Anthropic (Claude), Google Gemini, Google
   Vertex AI, AWS Bedrock.
-- **OpenAI-compatible** — Groq, DeepSeek, Perplexity, Mistral AI,
+- **OpenAI-compatible**, Groq, DeepSeek, Perplexity, Mistral AI,
   OpenRouter, Cerebras.
-- **Self-hosted via OpenAI-compatible** — Ollama, llama.cpp, vLLM,
+- **Self-hosted via OpenAI-compatible**, Ollama, llama.cpp, vLLM,
   on-prem TGI, or anything else exposing an OpenAI-shaped API.
 
 This document covers the request flow, authentication model, supported
@@ -68,12 +68,12 @@ and are mounted in `backend/app/api/router.py` alongside the scan API.
 
 Implementations live in:
 
-- `backend/app/api/runtime_security_proxy.py` — FastAPI routes, auth,
+- `backend/app/api/runtime_security_proxy.py`, FastAPI routes, auth,
   header filtering, error shaping.
-- `backend/app/runtime_security/proxy.py` — pure payload-walk helpers
+- `backend/app/runtime_security/proxy.py`, pure payload-walk helpers
   (`scan_openai_chat_request`, `scan_anthropic_response`, …) and
   `forward_upstream()`.
-- `backend/tests/test_runtime_security_proxy.py` — unit tests for the
+- `backend/tests/test_runtime_security_proxy.py`, unit tests for the
   payload-walk helpers against a `FakeScanner`.
 
 ---
@@ -143,12 +143,12 @@ client.messages.create(
 > `x-api-key`. To avoid colliding with either, OpenAI callers send the
 > antidote credential as `X-API-Key` (free for OpenAI) and Anthropic
 > callers send it as `X-Antidote-Key` (free for Anthropic).
-> `Authorization` is **never** consumed by the proxy routes — it is
+> `Authorization` is **never** consumed by the proxy routes, it is
 > forwarded verbatim.
 
 ### OpenAI-compatible providers (Groq, DeepSeek, Perplexity, Mistral, OpenRouter, Cerebras)
 
-The same OpenAI SDK works against the `/openai-compatible/v1` route —
+The same OpenAI SDK works against the `/openai-compatible/v1` route,
 pick the upstream with `X-Antidote-Upstream-Provider`.
 
 ```python
@@ -212,7 +212,7 @@ genai.configure(
         "api_endpoint": "https://<your-antidote-host>/api/runtime-security/proxy/gemini",
     },
 )
-# OR pass the key as a header — the proxy forwards both query-string `?key=` and `x-goog-api-key`.
+# OR pass the key as a header, the proxy forwards both query-string `?key=` and `x-goog-api-key`.
 ```
 
 Or with plain `requests`:
@@ -296,7 +296,7 @@ is used instead. The headers always take precedence so callers can use
 their own AWS account.
 
 > **Streaming.** `/bedrock/model/{m}/converse-stream` is **not** yet
-> implemented — Bedrock streams use the AWS event-stream binary framing
+> implemented, Bedrock streams use the AWS event-stream binary framing
 > which requires a custom parser. Use the non-streaming `/converse`
 > route for now.
 
@@ -310,12 +310,12 @@ Unlike the normal `get_current_user` dependency, it must leave
 
 Priority order:
 
-1. `X-API-Key: ak_...` — the normal antidote API key header. OpenAI
+1. `X-API-Key: ak_...`, the normal antidote API key header. OpenAI
    clients should use this.
-2. `X-Antidote-Key: ak_... | Bearer <jwt>` — fallback for clients
+2. `X-Antidote-Key: ak_... | Bearer <jwt>`, fallback for clients
    that already use `x-api-key` for the upstream provider (i.e.
    Anthropic).
-3. `antidote_session` cookie — lets the in-app dashboard exercise the
+3. `antidote_session` cookie, lets the in-app dashboard exercise the
    proxy without provisioning an API key.
 
 After authentication, the route enforces the `runtime_security.scan`
@@ -346,7 +346,7 @@ App in the workspace). The proxy resolves the App via
    `ResolvedAppContext` on `request.state.runtime_security_app`. The
    scanner picks up thresholds, detectors, custom phrases, custom PII
    rules, tool policy, and `routing.forbidden_providers` from this
-   context — so two Apps in the same workspace can run with very
+   context, so two Apps in the same workspace can run with very
    different security postures against the same shared firewall.
 
 The resolved App's `config_version_id` is stamped onto every
@@ -366,7 +366,7 @@ For every proxy call the route performs:
 
 1. **Authenticate** (see §4) and load the current
    `RuntimeSecurityConfig` via `_load_settings(db)`. If
-   `cfg.enabled == False`, return **HTTP 503** — the proxy refuses to
+   `cfg.enabled == False`, return **HTTP 503**, the proxy refuses to
    pass traffic through when the firewall is disabled, so operators get
    a loud signal instead of silent bypass.
 2. **Parse the JSON body** and reject `stream=true` with **HTTP 400**.
@@ -382,7 +382,7 @@ For every proxy call the route performs:
    `source_app="proxy:openai"` / `source_app="proxy:anthropic"` so the
    dashboard can segment proxy traffic from direct scan traffic.
 5. **Forward upstream** via `httpx.AsyncClient.post()`. Headers are
-   filtered by `_filter_inbound_headers()` — hop-by-hop and antidote
+   filtered by `_filter_inbound_headers()`, hop-by-hop and antidote
    auth headers are stripped, and provider-specific headers are kept
    (`Authorization` for OpenAI, `x-api-key` / `anthropic-version` for
    Anthropic).
@@ -439,7 +439,7 @@ rewritten to a single-prompt form with the scanner's redacted text.
 
 `scan_anthropic_request` covers:
 
-- `body["system"]` — string form and list-of-text-blocks form.
+- `body["system"]`, string form and list-of-text-blocks form.
 - `body["messages"][]` where `role == "user"`, with both string and
   array content.
 - Assistant turns are skipped for the same reason as OpenAI.
@@ -451,8 +451,8 @@ rewritten to a single-prompt form with the scanner's redacted text.
 ### Google Gemini / Vertex AI (`:generateContent` and `:streamGenerateContent`)
 
 Gemini and Vertex share the same body shape (`generateContent` payload),
-so a single set of helpers — `scan_gemini_request` and
-`scan_gemini_response` — covers both routes.
+so a single set of helpers, `scan_gemini_request` and
+`scan_gemini_response`, covers both routes.
 
 - `body["systemInstruction"]["parts"][].text` is scanned and redacted
   in place (string and object form both supported).
@@ -472,7 +472,7 @@ so a single set of helpers — `scan_gemini_request` and
 
 `scan_bedrock_converse_request` walks:
 
-- `body["system"][].text` — list-of-text-blocks form (the only form
+- `body["system"][].text`, list-of-text-blocks form (the only form
   Bedrock Converse accepts).
 - `body["messages"][]` where `role == "user"`, scanning
   `content[].text` blocks. Non-text content (`image`, `document`,
@@ -482,7 +482,7 @@ so a single set of helpers — `scan_gemini_request` and
 `scan_bedrock_converse_response` walks
 `body["output"]["message"]["content"][].text` with the same
 text-block-only redaction semantics. Streaming (`/converse-stream`) is
-not yet implemented — see §3 caveat.
+not yet implemented, see §3 caveat.
 
 ### Verdict Folding
 
@@ -597,13 +597,13 @@ environment variables.
 | `RUNTIME_SECURITY_ANTHROPIC_BASE_URL`              | `https://api.anthropic.com`               | Upstream Anthropic origin.                                                                                                               |
 | `RUNTIME_SECURITY_GEMINI_BASE_URL`                 | `https://generativelanguage.googleapis.com` | Upstream Google AI Studio origin. (Vertex picks its origin from the request path's `{location}` segment.)                              |
 | `RUNTIME_SECURITY_OPENAI_COMPAT_ALLOWLIST`         | *(empty → full catalogue)*                | Comma-separated subset of `groq,deepseek,perplexity,mistral,openrouter,cerebras` permitted on this deployment.                          |
-| `RUNTIME_SECURITY_OPENAI_COMPAT_EXTRA_BASES`       | *(empty)*                                 | Comma-separated `http(s)://` bases that callers may target via `X-Antidote-Upstream-Base` — used for Ollama, llama.cpp, vLLM, on-prem TGI. |
+| `RUNTIME_SECURITY_OPENAI_COMPAT_EXTRA_BASES`       | *(empty)*                                 | Comma-separated `http(s)://` bases that callers may target via `X-Antidote-Upstream-Base`, used for Ollama, llama.cpp, vLLM, on-prem TGI. |
 | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN` / `AWS_REGION` | *(empty)*                | Fallback AWS credentials used by the Bedrock route when the caller doesn't send `X-Antidote-AWS-*` headers.                              |
 | `RUNTIME_SECURITY_PROXY_TIMEOUT`                   | `60` (seconds)                            | Upstream request timeout for `httpx.AsyncClient`.                                                                                        |
 
 Workspace-level knobs (`injection_model`, `max_text_length`,
 `log_events`, `enabled`, pre-prompt) are exposed by
-`PUT /api/runtime-security/config` — the proxy pulls them via
+`PUT /api/runtime-security/config`, the proxy pulls them via
 `_load_settings(db)` on every request, so a settings change takes
 effect immediately.
 
@@ -611,7 +611,7 @@ Per-App knobs (thresholds, detectors, custom phrases, custom PII
 rules, tool policy, `routing.forbidden_providers`) are read from the
 App's current config version when the request is resolved against an
 App-Id (see §4). Editing an App's config publishes a new version that
-takes effect on the next request — no proxy restart needed.
+takes effect on the next request, no proxy restart needed.
 
 See §9 of the client guide (`runtime-security-guide.md`) for the full
 schema split.
@@ -628,7 +628,7 @@ follow-up:
    (`:streamGenerateContent`), and Vertex AI (`:streamGenerateContent`)
    all stream through the proxy with windowed scanning and a
    provider-shaped block chunk on policy hit. **AWS Bedrock streaming
-   (`/converse-stream`) is not yet implemented** — Bedrock uses the
+   (`/converse-stream`) is not yet implemented**, Bedrock uses the
    AWS event-stream binary framing which needs a custom parser. The
    legacy OpenAI `/v1/completions` route also rejects streaming.
 2. **Non-text modalities pass through unscanned.** Image inputs,
@@ -639,8 +639,8 @@ follow-up:
 3. **No per-route rate limiting beyond the existing scan endpoints.**
    The proxy uses the same `runtime_security.scan` permission and the
    shared rate limits that apply to the rest of the Runtime Security
-   surface. Per-tenant upstream quota enforcement is out of scope here
-   — the upstream provider is the source of truth for that.
+   surface. Per-tenant upstream quota enforcement is out of scope
+   here; the upstream provider is the source of truth for that.
 4. **Tool/function-call arguments are not scanned or redacted.** This
    matches the scan endpoints' current behaviour. A malicious prompt
    injection that routes through tool args would be caught at the
@@ -657,14 +657,14 @@ input) one output event through the existing
 - `direction`: `"input"` or `"output"`
 - `verdict`: `"allow"` / `"redact"` / `"block"`
 - `provider`: `"openai"` or `"anthropic"`
-- `source_app`: `"proxy:openai"` or `"proxy:anthropic"` — use this to
+- `source_app`: `"proxy:openai"` or `"proxy:anthropic"`, use this to
   segment proxy traffic from direct scan-endpoint traffic in the
   dashboard filters.
 - `model`: the model name from the request body (input phase) or the
   upstream response (output phase).
 - `injection_score` / `injection_label`, `pii_count`, `pii_categories`,
   `text_length`, `latency_ms`, `blocked_reason` as usual.
-- `metadata_`: `{phase, location}` — `location` points at the blocked
+- `metadata_`: `{phase, location}`, `location` points at the blocked
   field (e.g. `"messages[2].user"`, `"choices[0].message"`,
   `"system"`) to speed up root-cause analysis.
 
@@ -726,13 +726,13 @@ worker stack), a dedicated container ships alongside the main image.
 | File                                        | Role                                                                                               |
 | ------------------------------------------- | -------------------------------------------------------------------------------------------------- |
 | `backend/Dockerfile.runtime-security`       | Slim image built on `python:3.11-slim`, CPU-only torch, transformers.                              |
-| `backend/requirements.runtime-security.txt` | Minimal dep set — no celery, ultralytics, torchvision, pandas, sklearn, scikit-image.              |
+| `backend/requirements.runtime-security.txt` | Minimal dep set, no celery, ultralytics, torchvision, pandas, sklearn, scikit-image.              |
 | `backend/app/runtime_security_main.py`      | Dedicated ASGI app that mounts **only** `runtime_security_router` and `runtime_security_proxy_router`. |
 
 The minimal app intentionally excludes everything outside the Runtime
-Security data-plane — no datasets, healing, playground, or
+Security data-plane, no datasets, healing, playground, or
 auth/user-management routes. **App management endpoints
-(`/api/runtime-security/apps/...`) are also excluded** — Apps are
+(`/api/runtime-security/apps/...`) are also excluded**, Apps are
 created and configured against the main Antidote API, then their
 UUIDs and tokens are referenced by the dedicated container at
 runtime via `X-Antidote-App-Id` / `X-Antidote-App-Token`. Both
@@ -756,8 +756,8 @@ The only endpoints it serves are:
 - `POST /api/runtime-security/proxy/gemini/v1beta/models/{model}:{action}`
 - `POST /api/runtime-security/proxy/vertex/v1/projects/.../models/{model}:{action}`
 - `POST /api/runtime-security/proxy/bedrock/model/{modelId}/converse`
-- `GET  /healthz` — container liveness
-- `GET  /readyz` — container readiness (returns `ready` once the
+- `GET  /healthz`, container liveness
+- `GET  /readyz`, container readiness (returns `ready` once the
   injection model is warm)
 
 ### Why a separate container?
@@ -780,7 +780,7 @@ The only endpoints it serves are:
 
 ### Shared database
 
-Both containers talk to the **same** PostgreSQL instance — scan events
+Both containers talk to the **same** PostgreSQL instance, scan events
 from the dedicated proxy container land in the same
 `runtime_security_events` table that the Antidote dashboard reads, so
 events show up in the UI automatically without any cross-service
@@ -806,7 +806,7 @@ runtime_security:
     RUNTIME_SECURITY_GEMINI_BASE_URL: ${RUNTIME_SECURITY_GEMINI_BASE_URL:-https://generativelanguage.googleapis.com}
     RUNTIME_SECURITY_OPENAI_COMPAT_ALLOWLIST: ${RUNTIME_SECURITY_OPENAI_COMPAT_ALLOWLIST:-}
     RUNTIME_SECURITY_OPENAI_COMPAT_EXTRA_BASES: ${RUNTIME_SECURITY_OPENAI_COMPAT_EXTRA_BASES:-}
-    # Bedrock signing — optional; can also be provided per-request via X-Antidote-AWS-* headers.
+    # Bedrock signing, optional; can also be provided per-request via X-Antidote-AWS-* headers.
     AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
     AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
     AWS_REGION: ${AWS_REGION:-}
@@ -844,7 +844,7 @@ container-only env vars:
 | `RUNTIME_SECURITY_WARMUP_ON_START`    | `true`                               | Pre-load the injection classifier on startup so the first call is fast. |
 | `RUNTIME_SECURITY_CORS_ORIGINS`       | *(empty)*                            | Comma-separated list; when non-empty, CORS is enabled for those origins. |
 | `RUNTIME_SECURITY_DISABLE_INJECTION_MODEL` | *(unset)*                       | Set to `1` to skip loading the ML classifier (phrase heuristics only). |
-| `HF_HOME` / `TRANSFORMERS_CACHE`      | `/models`                            | Hugging Face cache location — mapped to the `runtime_security_models` volume. |
+| `HF_HOME` / `TRANSFORMERS_CACHE`      | `/models`                            | Hugging Face cache location, mapped to the `runtime_security_models` volume. |
 
 ### Model prefetch at build time
 
@@ -861,9 +861,9 @@ HuggingFace Hub download. For **air-gapped** builds set
 
 ### Health and readiness
 
-- `GET /healthz` — always returns `200 {"status": "ok"}`. Use this for
+- `GET /healthz`, always returns `200 {"status": "ok"}`. Use this for
   liveness probes.
-- `GET /readyz` — calls `warmup()` on the injection model and returns
+- `GET /readyz`, calls `warmup()` on the injection model and returns
   `ready` if the classifier loaded or `degraded` if the container is
   running on heuristics only. Use this for readiness probes so the
   first request doesn't pay the cold-start tax.
@@ -877,7 +877,7 @@ HuggingFace Hub download. For **air-gapped** builds set
   inference. Two workers per container is a reasonable starting point;
   scale horizontally before scaling `--workers` past ~4 because the HF
   pipeline holds its own thread-pool internally.
-- Model load is the slow step. Keep the container warm — aggressive
+- Model load is the slow step. Keep the container warm, aggressive
   scale-to-zero will trade every cold start for ~5-15s on a fresh CPU
   pod depending on the model.
 - Pin CPU limits high enough that DeBERTa inference doesn't starve on
@@ -892,7 +892,7 @@ HuggingFace Hub download. For **air-gapped** builds set
   `runtime_security_events` table.
 - **No new permission.** Proxy routes enforce the existing
   `runtime_security.scan` permission already used by `/scan/input`.
-- **TLS termination.** The proxy must sit behind TLS — any plaintext
+- **TLS termination.** The proxy must sit behind TLS, any plaintext
   deployment would leak both the client's upstream provider key and
   the tenant's prompt data. The existing ALB/NGINX termination used
   by the rest of the API is sufficient.

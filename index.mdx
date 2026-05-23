@@ -1,97 +1,68 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
+title: "Blindsight Antidote"
+description: "Data integrity for ML datasets and a runtime firewall for LLM traffic, delivered as a managed cloud service."
 ---
 
-## Setting up
+## What Antidote does
 
-Get your documentation site up and running in minutes.
-
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
-
-## Make it yours
-
-Design a docs site that looks great and empowers your users.
+Antidote is a two-part safety platform for AI systems, delivered as a
+managed cloud service. Use whichever side (or both) fits your stack.
 
 <Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+  <Card title="Data Integrity" icon="shield-check" href="/data-integrity/user-guide">
+    Scan training datasets for label errors, outliers, poisoning, bias,
+    leaked secrets, and prompt-injection payloads. Triage, heal, and
+    audit the results from a single workspace.
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
-  </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
-  </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
+  <Card title="Runtime Security" icon="bolt-lightning" href="/runtime-security/guide">
+    A drop-in firewall for LLM traffic. Scan prompts before they reach
+    the model and responses before they reach the user. Catches prompt
+    injection, PII / secret leakage, and dangerous tool calls.
   </Card>
 </Columns>
 
-## Create beautiful pages
+The two surfaces share the same scanners, the same event store, the
+same admin console, and the same workspace. They ship independently so
+you can adopt one without committing to the other.
 
-Everything you need to create world-class documentation.
+## Pick a starting point
 
 <Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Sign in, scan your first dataset, and make your first
+    Runtime Security call in about ten minutes.
   </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
+  <Card title="User guide" icon="book-open" href="/data-integrity/user-guide">
+    Every feature of the Data Integrity surface from the user's point
+    of view: projects, scans, healing, compliance, audit, settings.
   </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
+  <Card title="Runtime Security guide" icon="code" href="/runtime-security/guide">
+    Endpoints, verdicts, thresholds, and copy-paste examples in
+    Python, Node, and curl.
   </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
+  <Card title="API reference" icon="terminal" href="/api-reference/introduction">
+    OpenAPI-generated reference for the Antidote API and the
+    Runtime Security API. Try requests inline.
   </Card>
 </Columns>
 
-## Need inspiration?
+## How the surfaces relate
 
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
+|                      | Data Integrity                                          | Runtime Security                                             |
+| -------------------- | ------------------------------------------------------- | ------------------------------------------------------------ |
+| **What it inspects** | Datasets at rest (images, text, NIfTI, detection)       | Live LLM prompts and responses                               |
+| **When it runs**     | On upload, on schedule, on demand                       | On every request, inline                                     |
+| **Integration**      | Web UI, REST API, scheduled scans                       | Reverse proxy (swap `base_url`) or REST scan endpoints       |
+| **Latency budget**   | Minutes. Scans are batch jobs on shared workers.        | Milliseconds. Sits in the chat hot path.                     |
+| **Output**           | Issue lists, healed datasets, compliance reports        | `allow` / `redact` / `block` verdicts, events, drift charts  |
+
+If you only need one side today, start there. Wiring up the other
+later is additive: the workspace, API keys, and observability
+surfaces already know about both.
+
+## Architecture at a glance
+
+<Card title="How it fits together" icon="diagram-project" href="/data-integrity/architecture">
+  The API, scanning workers, healer, and queues that power both
+  surfaces. Useful before diving into the API reference.
 </Card>

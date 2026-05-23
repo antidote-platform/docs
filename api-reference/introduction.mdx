@@ -1,33 +1,96 @@
 ---
-title: 'Introduction'
-description: 'Example section for showcasing API endpoints'
+title: "API Reference"
+description: "The Antidote Cloud REST and WebSocket surface, organized by product area."
 ---
 
-<Note>
-  If you're not looking to build API reference documentation, you can delete
-  this section by removing the api-reference folder.
-</Note>
+Antidote exposes two OpenAPI-documented surfaces. Pick the one that
+matches what you're integrating with.
 
-## Welcome
+<Columns cols={2}>
+  <Card title="Antidote API" icon="shield-check">
+    Datasets, scans, results, healing, compliance, and audit. Use this
+    surface to drive Data Integrity programmatically.
+  </Card>
+  <Card title="Runtime Security API" icon="bolt-lightning">
+    Prompt and response scanning plus the OpenAI / Anthropic
+    wire-compatible reverse-proxy routes.
+  </Card>
+</Columns>
 
-There are two ways to build API documentation: [OpenAPI](https://mintlify.com/docs/api-playground/openapi/setup) and [MDX components](https://mintlify.com/docs/api-playground/mdx/configuration). For the starter kit, we are using the following OpenAPI specification.
+Both are listed in the left navigation under their own groups, with
+try-it-out enabled.
 
-<Card
-  title="Plant Store Endpoints"
-  icon="leaf"
-  href="https://github.com/mintlify/starter/blob/main/api-reference/openapi.json"
->
-  View the OpenAPI specification file
-</Card>
+## Base URL
+
+Every workspace gets a dedicated URL of the form:
+
+```
+https://<your-workspace>.antidote.blindsight.ai
+```
+
+The base URL appears in your welcome email and at the top of the
+Settings page. Every example in the API reference assumes you've set
+`API_BASE` to this value.
 
 ## Authentication
 
-All API endpoints are authenticated using Bearer tokens and picked up from the specification file.
+All endpoints require a bearer token. There are two ways to get one.
+
+### API keys (recommended for services)
+
+Mint a long-lived key from **Settings, API keys** in the workspace.
+Pass it as a bearer token on every request:
+
+```bash
+curl -H "Authorization: Bearer $API_KEY" $API_BASE/api/datasets
+```
+
+API keys are scoped to a workspace and can be revoked individually.
+
+### JWT login (interactive sessions)
+
+For short-lived programmatic sessions, exchange an email and password
+for a JWT:
+
+```bash
+curl -X POST $API_BASE/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"you@example.com","password":"..."}'
+```
+
+The response contains an `access_token` you pass on subsequent
+requests. Tokens expire after the configured TTL; refresh by logging
+in again.
+
+`GET /api/auth/me` returns the current user profile and roles.
+
+## Errors
+
+Every error response follows the same envelope:
 
 ```json
-"security": [
-  {
-    "bearerAuth": []
+{
+  "error": {
+    "code": "DATASET_NOT_FOUND",
+    "message": "No dataset with id 42."
   }
-]
+}
 ```
+
+The HTTP status code matches the situation (`400`, `401`, `403`,
+`404`, `409`, `422`, `429`, `500`). Always read `error.code` rather
+than parsing `error.message`, since wording can change.
+
+## Rate limits and quotas
+
+- Standard REST endpoints share a per-workspace rate limit. When you
+  hit it, requests return `429` with a `Retry-After` header.
+- Runtime Security scan endpoints are metered separately, counted
+  against your plan's `max_runtime_security_calls`. When the quota
+  runs out, scans return `402 QUOTA_EXCEEDED` until the license is
+  topped up.
+
+## Next steps
+
+- Browse the Antidote API endpoints in the left nav and try a request inline.
+- Wire Runtime Security with the [Runtime Security guide](/runtime-security/guide).
